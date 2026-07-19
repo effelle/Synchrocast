@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Visualizer Tools
+tools/visualizer/
+all_blobs.txt
+local_only
+.agent
+scratch/
+.codex_tmp/
+.antigravitycli/
