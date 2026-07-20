@@ -14,6 +14,8 @@ const char *synchrocast_message_type_to_string(SynchrocastMessageType type) {
       return "STATE_BROADCAST";
     case SynchrocastMessageType::INTENT_REQUEST:
       return "INTENT_REQUEST";
+    case SynchrocastMessageType::STATE_REQUEST:
+      return "STATE_REQUEST";
     default:
       return "UNKNOWN_MESSAGE";
   }

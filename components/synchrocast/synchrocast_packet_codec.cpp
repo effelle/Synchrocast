@@ -92,6 +92,12 @@ bool SynchrocastPacketCodec::is_valid_packet_(
            packet.payload_len == 0;
   }
 
+  if (packet.msg_type == SynchrocastMessageType::STATE_REQUEST) {
+    return packet.domain == SynchrocastDomain::UNKNOWN &&
+           packet.entity_hash == 0 && packet.intent == SynchrocastIntent::NONE &&
+           packet.payload_len == 0;
+  }
+
   if (packet.msg_type != SynchrocastMessageType::STATE_BROADCAST &&
       packet.msg_type != SynchrocastMessageType::INTENT_REQUEST) {
     return false;
@@ -135,11 +141,13 @@ bool SynchrocastPacketCodec::is_valid_packet_(
 }
 
 bool SynchrocastPacketCodec::encode(
-    const SynchrocastPacket &packet, uint32_t group_hash, uint32_t boot_id,
-    uint32_t sequence, const std::array<uint8_t, 32> &key,
+    const SynchrocastPacket &packet, uint32_t group_hash,
+    const SynchrocastNodeId &node_id, uint32_t boot_id, uint32_t sequence,
+    const std::array<uint8_t, 32> &key,
     std::array<uint8_t, MAX_FRAME_SIZE> &output, size_t &output_size) {
   output_size = 0;
-  if (boot_id == 0 || sequence == 0 || !is_valid_packet_(packet)) {
+  if (synchrocast_node_id_is_zero(node_id) || boot_id == 0 || sequence == 0 ||
+      !is_valid_packet_(packet)) {
     return false;
   }
 
@@ -152,9 +160,10 @@ bool SynchrocastPacketCodec::encode(
   output[9] = 0;  // Reserved flags.
   write_u16_(output.data() + 10, packet.payload_len);
   write_u32_(output.data() + 12, group_hash);
-  write_u32_(output.data() + 16, boot_id);
-  write_u32_(output.data() + 20, sequence);
-  write_u32_(output.data() + 24, packet.entity_hash);
+  memcpy(output.data() + 16, node_id.data(), node_id.size());
+  write_u32_(output.data() + 22, boot_id);
+  write_u32_(output.data() + 26, sequence);
+  write_u32_(output.data() + 30, packet.entity_hash);
 
   uint8_t *wire_payload = output.data() + HEADER_SIZE;
   if (uses_u32_payload_(packet)) {
@@ -174,7 +183,9 @@ bool SynchrocastPacketCodec::encode(
 
 SynchrocastDecodeResult SynchrocastPacketCodec::decode(
     const uint8_t *data, size_t size, uint32_t expected_group_hash,
-    const std::array<uint8_t, 32> &key, SynchrocastPacket &packet) {
+    const std::array<uint8_t, 32> &key, SynchrocastPacket &packet,
+    uint32_t &sequence) {
+  sequence = 0;
   if (data == nullptr || size < sizeof(SYNCHROCAST_MAGIC)) {
     return SynchrocastDecodeResult::NOT_SYNCHROCAST;
   }
@@ -209,7 +220,7 @@ SynchrocastDecodeResult SynchrocastPacketCodec::decode(
   const uint8_t raw_domain = data[6];
   const uint8_t raw_intent = data[7];
   const uint8_t raw_role = data[8];
-  if (raw_type > static_cast<uint8_t>(SynchrocastMessageType::INTENT_REQUEST) ||
+  if (raw_type > static_cast<uint8_t>(SynchrocastMessageType::STATE_REQUEST) ||
       raw_domain > static_cast<uint8_t>(SynchrocastDomain::TEXT_SENSOR) ||
       raw_intent >
           static_cast<uint8_t>(SynchrocastIntent::CANONICAL_STATE) ||
@@ -230,11 +241,14 @@ SynchrocastDecodeResult SynchrocastPacketCodec::decode(
   packet.domain = static_cast<SynchrocastDomain>(raw_domain);
   packet.intent = static_cast<SynchrocastIntent>(raw_intent);
   packet.source_role = static_cast<SynchrocastRole>(raw_role);
-  packet.source_boot_id = read_u32_(data + 16);
-  packet.entity_hash = read_u32_(data + 24);
+  memcpy(packet.source_node_id.data(), data + 16,
+         packet.source_node_id.size());
+  packet.source_boot_id = read_u32_(data + 22);
+  packet.entity_hash = read_u32_(data + 30);
   packet.payload_len = static_cast<uint8_t>(payload_size);
-  const uint32_t sequence = read_u32_(data + 20);
-  if (packet.source_boot_id == 0 || sequence == 0) {
+  sequence = read_u32_(data + 26);
+  if (synchrocast_node_id_is_zero(packet.source_node_id) ||
+      packet.source_boot_id == 0 || sequence == 0) {
     return SynchrocastDecodeResult::MALFORMED;
   }
 

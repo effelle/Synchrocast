@@ -211,6 +211,19 @@ Readers also mark the local entity unavailable when the leader stops
 refreshing it. These recovery intervals are internal protocol behavior and are
 not YAML settings.
 
+At startup and after network recovery, a follower or satellite broadcasts an
+authenticated request for current state. The leader answers by rebroadcasting
+the values it already owns. The request is group-wide and contains no sensor
+list; each receiving device still keeps only the share keys present in its own
+YAML.
+
+Receiving the same available value again refreshes its last-seen time without
+publishing a duplicate ESPHome update. The same applies to repeated
+unavailability. A leader restart is recognized by its stable device identity,
+so its new boot session is accepted immediately. A different device cannot
+silently replace the active leader until that leader has been stale for the
+fixed recovery window.
+
 A numeric sensor transports its absolute 32-bit floating-point value. Energy
 totals should therefore be shared as the complete accumulated total, not as the
 change since the previous packet. A later successful packet then repairs any

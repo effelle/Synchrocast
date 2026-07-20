@@ -44,6 +44,7 @@ class TextSensorHandler final : public SynchrocastDomainHandler {
   void handle_intent(const SynchrocastPacket &packet) override;
   void handle_state_broadcast(const SynchrocastPacket &packet) override;
   void on_transport_recovered() override;
+  void on_state_request() override;
   void loop() override;
   void dump_config() override;
 
@@ -67,9 +68,7 @@ class TextSensorHandler final : public SynchrocastDomainHandler {
   struct Receiver {
     SynchrocastTextSensor *entity{nullptr};
     uint32_t entity_hash{0};
-    uint32_t owner_boot_id{0};
     uint32_t last_received_ms{0};
-    uint32_t last_conflict_log_ms{0};
     bool seen{false};
   };
 
@@ -77,13 +76,15 @@ class TextSensorHandler final : public SynchrocastDomainHandler {
   Receiver *find_receiver_(uint32_t entity_hash);
   void observe_(Publisher &publisher);
   void maybe_send_(Publisher &publisher, uint32_t now);
-  void expire_receivers_(uint32_t now);
+  void expire_next_receiver_(uint32_t now);
 
   SynchrocastComponent *parent_{nullptr};
   std::array<Publisher, MAX_ENTITIES> publishers_{};
   std::array<Receiver, MAX_ENTITIES> receivers_{};
   uint8_t publisher_count_{0};
   uint8_t receiver_count_{0};
+  uint8_t publisher_cursor_{0};
+  uint8_t receiver_cursor_{0};
 };
 
 }  // namespace synchrocast

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -11,7 +12,8 @@ namespace synchrocast {
 
 static constexpr size_t SYNCHROCAST_WIRE_MAX_PAYLOAD_SIZE = 96;
 #if defined(USE_SYNCHROCAST_FAN)
-static constexpr size_t SYNCHROCAST_MAX_PAYLOAD_SIZE = 96;
+// Full current fan state needs 78 bytes with a 64-byte preset.
+static constexpr size_t SYNCHROCAST_MAX_PAYLOAD_SIZE = 80;
 #elif defined(USE_SYNCHROCAST_TEXT_SENSOR)
 static constexpr size_t SYNCHROCAST_MAX_PAYLOAD_SIZE = 64;
 #elif defined(USE_SYNCHROCAST_COVER) || defined(USE_SYNCHROCAST_VALVE)
@@ -31,7 +33,19 @@ enum class SynchrocastMessageType : uint8_t {
   HEARTBEAT = 0,
   STATE_BROADCAST = 1,
   INTENT_REQUEST = 2,
+  STATE_REQUEST = 3,
 };
+
+using SynchrocastNodeId = std::array<uint8_t, 6>;
+
+inline bool synchrocast_node_id_is_zero(const SynchrocastNodeId &node_id) {
+  for (const uint8_t value : node_id) {
+    if (value != 0) {
+      return false;
+    }
+  }
+  return true;
+}
 
 enum class SynchrocastDomain : uint8_t {
   UNKNOWN = 0,
@@ -93,6 +107,7 @@ struct SynchrocastPacket {
   uint32_t entity_hash{0};
   uint32_t source_boot_id{0};
   SynchrocastPayload payload{};
+  SynchrocastNodeId source_node_id{};
   SynchrocastMessageType msg_type{SynchrocastMessageType::HEARTBEAT};
   SynchrocastDomain domain{SynchrocastDomain::UNKNOWN};
   SynchrocastIntent intent{SynchrocastIntent::NONE};
@@ -103,16 +118,16 @@ struct SynchrocastPacket {
 static_assert(sizeof(SynchrocastPayload) == SYNCHROCAST_MAX_PAYLOAD_SIZE,
               "Synchrocast payload size changed");
 #if defined(USE_SYNCHROCAST_FAN)
-static_assert(sizeof(SynchrocastPacket) == 112,
+static_assert(sizeof(SynchrocastPacket) == 100,
               "Synchrocast fan packet must remain bounded");
 #elif defined(USE_SYNCHROCAST_TEXT_SENSOR)
-static_assert(sizeof(SynchrocastPacket) == 80,
+static_assert(sizeof(SynchrocastPacket) == 84,
                "Synchrocast packet must remain bounded");
 #elif defined(USE_SYNCHROCAST_COVER) || defined(USE_SYNCHROCAST_VALVE)
-static_assert(sizeof(SynchrocastPacket) == 48,
+static_assert(sizeof(SynchrocastPacket) == 52,
               "Synchrocast actuator packet must remain bounded");
 #else
-static_assert(sizeof(SynchrocastPacket) == 32,
+static_assert(sizeof(SynchrocastPacket) == 36,
               "Synchrocast packet must remain compact without text sensors");
 #endif
 
@@ -125,6 +140,7 @@ class SynchrocastDomainHandler {
   }
   virtual void handle_intent(const SynchrocastPacket &packet) = 0;
   virtual void handle_state_broadcast(const SynchrocastPacket &packet) = 0;
+  virtual void on_state_request() {}
   virtual void on_transport_recovered() {}
   virtual void loop() {}
   virtual void dump_config() {}

@@ -97,6 +97,12 @@ Synchrocast waits through a short grace period, uses internal fallback channel
 6, and rearms when Wi-Fi returns or changes channel. The leader then refreshes
 its latest state. There is no recovery YAML to maintain.
 
+A follower or satellite also asks for the current group state when it starts
+and after transport recovery. The request is an authenticated broadcast; the
+leader answers with its latest absolute values and each receiver keeps only the
+entities listed in its own configuration. You do not add a polling interval,
+request switch, or destination address.
+
 ## 6. Check the Logs
 
 Temporarily enable focused verbose logs:
@@ -115,6 +121,11 @@ At startup, look for `Transport state=standalone active`. On the leader,
 `Broadcast numeric state` confirms transmission. On the follower,
 `Published remote numeric value` confirms that a matching authenticated
 broadcast reached the read-only sensor.
+
+With verbose logs, the follower also reports `STATE_REQUEST sent` and the
+leader reports `Processed STATE_REQUEST`. If the received value already matches
+the local value, `Refreshed unchanged` is normal: liveness was renewed without
+emitting another ESPHome state change.
 
 The dispatcher statistics include `filtered`. That counter increases when the
 device receives a valid state broadcast for a domain or share key it did not

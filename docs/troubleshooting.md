@@ -124,6 +124,19 @@ The packet type is not allowed from the claimed role. Observed sensor state may
 come from a `leader`; future command intents may come from a
 `controller` or `satellite`. A `follower` cannot publish sensor state.
 
+### `STATE_REQUEST sent`, `Processed STATE_REQUEST`, or `Suppressed repeated STATE_REQUEST`
+
+These are normal recovery diagnostics. A follower or satellite asks the group
+leader for current absolute state at startup or after transport recovery. One
+broadcast response benefits every listener, so a leader suppresses duplicate
+requests received within a short window. No YAML action is required.
+
+### `Canonical leader restarted`
+
+The same physical leader started a new boot session. Its stable node identity
+still matches, so Synchrocast accepts its state immediately instead of waiting
+for the old session to become stale.
+
 ### `malformed` or `unsupported type`
 
 The frame has invalid lengths, fields, payload semantics, or a domain that this
@@ -161,12 +174,13 @@ domain or share key it did not request, so Synchrocast discarded it before the
 packet queue. If a wanted value is missing, compare the share key's spelling,
 underscores, and case. A valid share key is lowercase and contains no spaces.
 
-### `Ignoring competing publisher`
+### `Ignored competing canonical leader`
 
-Two active leaders are publishing the same group, domain, and share key. The
-reader keeps the first authenticated leader and ignores the contender so the
-value cannot jump between sources. Remove the duplicate mapping. After the
-current owner becomes stale, a new leader may take ownership.
+Two active devices are publishing authoritative state for the same group. The
+receiver keeps the first authenticated stable node and ignores the contender so
+sensors and actuators cannot jump between leaders. Remove the duplicate leader
+configuration. After the current owner becomes stale, a new leader may take
+ownership.
 
 ### `Numeric receiver stale`, `Binary receiver stale`, or `Text receiver stale`
 

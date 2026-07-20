@@ -40,23 +40,24 @@ handoff to application processing.
 
 ## Authenticated Wire Format
 
-Synchrocast frames use a distinct `SCST` signature and protocol version 1. Every
+Synchrocast frames use a distinct `SCST` signature and protocol version 2. Every
 multibyte field is serialized in network byte order; the in-memory C++ struct is
 never copied onto the network.
 
 | Field group | Bytes | Notes |
 | --- | --- | --- |
-| Signature and version | 5 | `SCST`, version `1` |
+| Signature and version | 5 | `SCST`, version `2` |
 | Message, domain, intent, role, flags | 5 | Flags are currently zero |
 | Payload length | 2 | Maximum 96 |
 | Group hash | 4 | Routes one raw frame among configured groups |
-| Sender boot ID | 4 | Random nonzero identity for one boot |
+| Sender node ID | 6 | Stable hardware identity across restarts |
+| Sender boot ID | 4 | Random nonzero session identity for one boot |
 | Sequence | 4 | Monotonic nonzero counter |
 | Entity hash | 4 | Observational share key or current actuator identity |
 | Payload | 0-96 | Explicit domain representation |
 | Authentication tag | 16 | Truncated HMAC-SHA256 over header and payload |
 
-The fixed header is 28 bytes and the largest authenticated frame is 140 bytes,
+The fixed header is 34 bytes and the largest authenticated frame is 146 bytes,
 well below the shared transport MTU of 250 bytes. Numeric payloads are four
 bytes, binary payloads one byte, and an unavailable value has no payload. Empty
 text is distinct from unavailable because its intent remains `SET_VALUE`.
@@ -70,12 +71,26 @@ queued until its authentication tag and domain semantics pass. Frames for a
 different Synchrocast group remain unclaimed so another configured group on the
 same shared bus can inspect them.
 
-Each outbound packet carries the current boot ID and a sequence. A fixed table
-tracks up to eight remote boot sessions. Equal or lower sequences are discarded
+Each outbound packet carries a stable node ID, the current boot ID, and a
+sequence. A fixed table tracks up to eight remote node/boot sessions. Equal or
+lower sequences are discarded
 before dispatch, which also suppresses the duplicate copy when one packet is
 received through both ESP-NOW and UDP. Sender roles are enforced after
-authentication: authoritative state comes from a leader and intent comes from
-a controller or satellite; every role may send a heartbeat.
+authentication: authoritative state comes from a leader, state requests come
+from a follower or satellite, and intent comes from a controller or satellite;
+every role may send a heartbeat.
+
+One stable node owns canonical state for the group. A new boot ID from that same
+node is accepted immediately, so a leader restart does not wait for a lease to
+expire. State from another node is ignored until the current owner has been
+silent for three minutes. This prevents two leaders from alternating actuator
+state while still allowing deliberate failover.
+
+Followers and satellites send three jittered authenticated `STATE_REQUEST`
+attempts at startup and after transport recovery. A leader coalesces requests
+arriving within 500 ms and asks every compiled domain handler to queue its
+current absolute state with bounded jitter. Requests and responses remain
+broadcasts: each receiver filters the share keys or actuator identities it uses.
 
 ## Transport Ownership and CFX Coexistence
 
@@ -129,7 +144,9 @@ semantic validation fails, preventing unsafe fall-through.
 1. Do not allocate memory in the frame, replay, or dispatcher path.
 2. Do not call ESPHome entities from Wi-Fi, ESP-NOW, UDP, or worker-task
    callbacks.
-3. Bound every queue, registry, scan, retry, and amount of work per loop.
+3. Bound every queue, registry, scan, retry, and amount of work per loop. Each
+   domain observes at most one publisher and one observational receiver per
+   pass.
 4. Prefer the newest absolute state, but never reorder a user intent.
 5. Keep normal logs quiet and rate-limit warnings that traffic can trigger.
 6. Compile handlers and ESPHome domain dependencies only when YAML uses them.
@@ -144,23 +161,24 @@ Core storage uses fixed compile-time bounds:
 
 | Item | Current bound | Storage consequence |
 | --- | --- | --- |
-| Authenticated wire frame | 140 bytes maximum | One fixed encode buffer |
-| Sensor-only application packet | 32 bytes | 16-packet queue is 512 bytes |
-| Cover or Valve application packet | 48 bytes | 16-packet queue is 768 bytes |
-| Text Sensor application packet | 80 bytes | 16-packet queue is 1,280 bytes |
-| Fan application packet | 112 bytes | 16-packet queue is 1,792 bytes |
+| Authenticated wire frame | 146 bytes maximum | One fixed encode buffer |
+| Sensor-only application packet | 36 bytes | 16-packet queue is 576 bytes |
+| Cover or Valve application packet | 52 bytes | 16-packet queue is 832 bytes |
+| Text Sensor application packet | 84 bytes | 16-packet queue is 1,344 bytes |
+| Fan application packet | 100 bytes | 16-packet queue is 1,600 bytes |
 | Dispatcher work | 4 packets per loop | Remaining packets wait |
 | Domain dispatch table | 16 pointer slots | 64 bytes on a 32-bit target |
-| Replay table | 8 boot sessions | Fixed array, oldest entry replaced |
+| Replay table | 8 node/boot sessions | Fixed array, oldest entry replaced |
 | Standalone group sinks | 8 pointers | One transport shared by all groups |
 | Standalone UDP receive | 251-byte stack buffer | At most 4 datagrams per poll |
 | Observational handler | 16 leader sources or 16 receiver interests per instantiated domain | No heap-backed map |
 | Component instances | 8 maximum | Matches shared-consumer bound |
 
 Packet capacity follows the largest configured domain. Fan reserves a bounded
-96-byte payload so the full canonical state can include a preset name. Text
-Sensor reserves 64 bytes; Cover and Valve reserve 32; sensor-only builds retain
-the 16-byte payload and 32-byte packet. Every unused handler is omitted.
+80-byte application payload so the full canonical state can include a preset
+name. The wire codec remains bounded at 96 payload bytes. Text Sensor reserves
+64 bytes; Cover and Valve reserve 32; sensor-only builds retain the 16-byte
+payload and 36-byte packet. Every unused handler is omitted.
 
 Each observational handler reserves its source and interest tables only when
 that domain is configured. A text source keeps one fixed last-sent buffer;

@@ -27,21 +27,23 @@ enum class SynchrocastDecodeResult : uint8_t {
 
 class SynchrocastPacketCodec final {
  public:
-  static constexpr uint8_t VERSION = 1;
-  static constexpr size_t HEADER_SIZE = 28;
+  static constexpr uint8_t VERSION = 2;
+  static constexpr size_t HEADER_SIZE = 34;
   static constexpr size_t AUTH_TAG_SIZE = 16;
   static constexpr size_t MAX_FRAME_SIZE =
       HEADER_SIZE + SYNCHROCAST_WIRE_MAX_PAYLOAD_SIZE + AUTH_TAG_SIZE;
 
   static bool encode(const SynchrocastPacket &packet, uint32_t group_hash,
-                     uint32_t boot_id, uint32_t sequence,
+                     const SynchrocastNodeId &node_id, uint32_t boot_id,
+                     uint32_t sequence,
                      const std::array<uint8_t, 32> &key,
                      std::array<uint8_t, MAX_FRAME_SIZE> &output,
                      size_t &output_size);
 
   static SynchrocastDecodeResult decode(
       const uint8_t *data, size_t size, uint32_t expected_group_hash,
-      const std::array<uint8_t, 32> &key, SynchrocastPacket &packet);
+      const std::array<uint8_t, 32> &key, SynchrocastPacket &packet,
+      uint32_t &sequence);
 
   static bool is_valid_utf8(const uint8_t *data, size_t size);
 

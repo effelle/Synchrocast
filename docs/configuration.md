@@ -210,6 +210,12 @@ rebroadcasts current state after recovery. When `cfx_sync` owns the physical
 transport, Synchrocast does not change its channel; it observes transport
 recovery and refreshes its own semantic state instead.
 
+Followers and satellites automatically broadcast an authenticated state
+request at startup and after recovery. A leader answers from its current local
+state with bounded jitter. This is deliberately not configurable: there is no
+publish/receive flag, request interval, unicast address, or acknowledgement
+option to add to YAML.
+
 ## Base Options
 
 | Option | Required | Default | Meaning |

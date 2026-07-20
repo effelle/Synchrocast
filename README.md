@@ -117,12 +117,12 @@ read `id(meter_phase_2).state` directly. See the
 
 The current application layer follows these rules:
 
-- Authenticated frames are explicitly serialized, bounded to 140 bytes, and
+- Authenticated protocol-v2 frames are explicitly serialized, bounded to 146 bytes, and
   protected by a truncated HMAC-SHA256 tag.
 - A decoded packet is copied into a fixed 16-slot ring buffer. A sensor-only
-  build uses a 32-byte packet (512-byte queue); Cover/Valve use 48-byte packets,
-  Text Sensor uses 80-byte packets, and Fan uses 112-byte packets for bounded
-  optional preset state.
+  build uses a 36-byte packet (576-byte queue); Cover/Valve use 52-byte packets
+  (832 bytes), Text Sensor uses 84-byte packets (1,344 bytes), and Fan uses
+  100-byte packets (1,600 bytes) while retaining bounded optional preset state.
 - At most four packets are dispatched per ESPHome loop iteration.
 - Repeated pending state for the same entity is coalesced without crossing a
   newer intent for that entity.
@@ -131,7 +131,12 @@ The current application layer follows these rules:
 - Sensor sources retain only the latest coalesced state and use a fixed internal
   recovery refresh; there are no user-facing Synchrocast timing controls.
 - Duplicate packets and cross-transport copies are suppressed by authenticated
-  boot/session sequence numbers.
+  stable node identity, boot ID, and sequence.
+- Followers and satellites broadcast a small authenticated state request at
+  startup and after transport recovery. The leader answers with its latest
+  absolute state; no polling or request YAML is required.
+- Repeated absolute state is idempotent: it refreshes liveness without causing
+  another sensor publication or actuator command when the local state matches.
 - Synchrocast owns ESP-NOW/UDP normally. If `cfx_sync` is configured,
   Synchrocast attaches as a bounded raw-packet consumer instead of starting a
   second transport.

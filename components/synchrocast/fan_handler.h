@@ -37,6 +37,7 @@ class FanHandler final : public SynchrocastDomainHandler {
   void handle_intent(const SynchrocastPacket &packet) override;
   void handle_state_broadcast(const SynchrocastPacket &packet) override;
   void on_transport_recovered() override;
+  void on_state_request() override;
   void loop() override;
   void dump_config() override;
 
@@ -68,6 +69,7 @@ class FanHandler final : public SynchrocastDomainHandler {
   SynchrocastComponent *parent_{nullptr};
   SynchrocastEntityRegistry<fan::Fan, MAX_ENTITIES> entities_;
   std::array<PublishedState, MAX_ENTITIES> published_{};
+  uint8_t publisher_cursor_{0};
   std::array<uint8_t, MAX_ENTITIES> speed_counts_{};
   std::array<bool, MAX_ENTITIES> supports_oscillation_{};
   std::array<bool, MAX_ENTITIES> supports_direction_{};

@@ -86,6 +86,7 @@ class SynchrocastComponent final : public Component,
  protected:
   struct ReplayState {
     bool active{false};
+    SynchrocastNodeId node_id{};
     uint32_t boot_id{0};
     uint32_t last_sequence{0};
     uint32_t last_seen_ms{0};
@@ -95,9 +96,14 @@ class SynchrocastComponent final : public Component,
   static const char *decode_result_to_string_(SynchrocastDecodeResult result);
   bool role_allows_message_(SynchrocastRole role,
                             SynchrocastMessageType type) const;
-  bool accept_sequence_(uint32_t boot_id, uint32_t sequence);
+  bool accept_sequence_(const SynchrocastNodeId &node_id, uint32_t boot_id,
+                        uint32_t sequence);
+  bool accept_state_owner_(const SynchrocastPacket &packet);
+  void reset_boot_id_();
   uint32_t next_sequence_();
   void send_heartbeat_();
+  void schedule_state_requests_(const char *reason);
+  void maybe_send_state_request_();
   void maybe_log_stats_();
   void log_transport_transition_(SynchrocastTransportState state);
 
@@ -108,6 +114,8 @@ class SynchrocastComponent final : public Component,
 #endif
   std::array<uint8_t, 32> key_{};
   std::array<ReplayState, 8> replay_states_{};
+  SynchrocastNodeId node_id_{};
+  SynchrocastNodeId state_owner_node_id_{};
   SynchrocastRole role_{SynchrocastRole::FOLLOWER};
   SynchrocastTransportOwner transport_owner_{
       SynchrocastTransportOwner::SYNCHROCAST};
@@ -117,6 +125,9 @@ class SynchrocastComponent final : public Component,
       SynchrocastTransportState::UNCONFIGURED};
   uint32_t group_hash_{0};
   uint32_t boot_id_{0};
+  uint32_t state_owner_boot_id_{0};
+  uint32_t state_owner_last_seen_ms_{0};
+  uint32_t last_state_conflict_log_ms_{0};
   uint32_t tx_sequence_{0};
   uint32_t heartbeat_interval_ms_{30000};
   uint32_t last_heartbeat_ms_{0};
@@ -134,7 +145,12 @@ class SynchrocastComponent final : public Component,
   uint32_t role_rejections_{0};
   uint32_t enqueue_failures_{0};
   uint32_t transport_recoveries_{0};
+  uint32_t state_requests_sent_{0};
+  uint32_t state_owner_conflicts_{0};
+  uint32_t next_state_request_ms_{0};
   uint16_t requested_udp_port_{0};
+  uint8_t state_request_attempt_{0};
+  bool state_request_active_{false};
 };
 
 }  // namespace synchrocast

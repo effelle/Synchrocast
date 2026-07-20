@@ -10,6 +10,10 @@ cover has no tilt support still follows the position; it quietly ignores only
 the tilt field. One unsupported feature never rejects the rest of a valid
 state.
 
+Absolute state is idempotent. Startup requests and periodic recovery refreshes
+may repeat the same canonical state, but a receiver does not issue another
+hardware command when its supported local fields already match.
+
 The examples below show only the `synchrocast:` block. The named entities, such
 as `living_room_cover`, must already exist elsewhere in that device's normal
 ESPHome configuration.

@@ -148,7 +148,7 @@ void FanHandler::apply_canonical_state_(const SynchrocastPacket &packet,
     switch (static_cast<FanStateField>(field.id)) {
       case FanStateField::POWER: {
         bool power;
-        if (canonical_read_bool(field, power)) {
+        if (canonical_read_bool(field, power) && entity->state != power) {
           call.set_state(power);
           apply = true;
         }
@@ -167,8 +167,10 @@ void FanHandler::apply_canonical_state_(const SynchrocastPacket &packet,
           } else if (speed > count) {
             speed = count;
           }
-          call.set_speed(speed);
-          apply = true;
+          if (entity->speed != speed) {
+            call.set_speed(speed);
+            apply = true;
+          }
         } else if (count == 0) {
           ESP_LOGV(TAG, "Ignored unsupported fan speed hash=0x%08" PRIX32,
                    packet.entity_hash);
@@ -178,7 +180,8 @@ void FanHandler::apply_canonical_state_(const SynchrocastPacket &packet,
       case FanStateField::OSCILLATING: {
         bool oscillating;
         if (canonical_read_bool(field, oscillating) &&
-            this->supports_oscillation_[index]) {
+            this->supports_oscillation_[index] &&
+            entity->oscillating != oscillating) {
           call.set_oscillating(oscillating);
           apply = true;
         } else if (!this->supports_oscillation_[index]) {
@@ -192,9 +195,12 @@ void FanHandler::apply_canonical_state_(const SynchrocastPacket &packet,
         uint8_t direction;
         if (canonical_read_u8(field, direction) && direction <= 1 &&
             this->supports_direction_[index]) {
-          call.set_direction(direction == 0 ? fan::FanDirection::FORWARD
-                                            : fan::FanDirection::REVERSE);
-          apply = true;
+          const auto desired = direction == 0 ? fan::FanDirection::FORWARD
+                                              : fan::FanDirection::REVERSE;
+          if (entity->direction != desired) {
+            call.set_direction(desired);
+            apply = true;
+          }
         } else if (!this->supports_direction_[index]) {
           ESP_LOGV(TAG,
                    "Ignored unsupported fan direction hash=0x%08" PRIX32,
@@ -220,14 +226,16 @@ void FanHandler::apply_canonical_state_(const SynchrocastPacket &packet,
             }
           }
         }
-        if (supported) {
-          call.set_preset_mode(reinterpret_cast<const char *>(field.data),
-                               field.length);
-          apply = true;
-        } else {
+        const StringRef desired(reinterpret_cast<const char *>(field.data),
+                                field.length);
+        if (!supported) {
           ESP_LOGV(TAG,
                    "Ignored unknown fan preset hash=0x%08" PRIX32,
                    packet.entity_hash);
+        } else if (entity->get_preset_mode() != desired) {
+          call.set_preset_mode(reinterpret_cast<const char *>(field.data),
+                               field.length);
+          apply = true;
         }
         break;
       }
@@ -240,6 +248,9 @@ void FanHandler::apply_canonical_state_(const SynchrocastPacket &packet,
   if (apply) {
     call.perform();
     ESP_LOGV(TAG, "Applied canonical fan state hash=0x%08" PRIX32,
+             packet.entity_hash);
+  } else {
+    ESP_LOGV(TAG, "Refreshed matching canonical fan state hash=0x%08" PRIX32,
              packet.entity_hash);
   }
 }
@@ -346,12 +357,16 @@ void FanHandler::loop() {
     return;
   }
   const uint32_t now = millis();
-  for (size_t i = 0; i < this->entities_.size(); i++) {
-    auto *entity = this->entities_.entity_at(i);
-    this->observe_(entity, this->published_[i], i);
-    this->maybe_send_(this->entities_.hash_at(i), entity,
-                      this->published_[i], i, now);
+  if (this->entities_.size() == 0) {
+    return;
   }
+  const size_t i = this->publisher_cursor_;
+  this->publisher_cursor_ =
+      (this->publisher_cursor_ + 1) % this->entities_.size();
+  auto *entity = this->entities_.entity_at(i);
+  this->observe_(entity, this->published_[i], i);
+  this->maybe_send_(this->entities_.hash_at(i), entity,
+                    this->published_[i], i, now);
 }
 
 void FanHandler::on_transport_recovered() {
@@ -363,6 +378,19 @@ void FanHandler::on_transport_recovered() {
         now + (this->entities_.hash_at(i) %
                (RECOVERY_JITTER_SPREAD_MS + 1));
   }
+}
+
+void FanHandler::on_state_request() {
+  const uint32_t now = millis();
+  for (size_t i = 0; i < this->entities_.size(); i++) {
+    this->published_[i].pending = true;
+    this->published_[i].last_send_attempt_ms = 0;
+    this->published_[i].send_not_before_ms =
+        now + (this->entities_.hash_at(i) %
+               (RECOVERY_JITTER_SPREAD_MS + 1));
+  }
+  ESP_LOGV(TAG, "STATE_REQUEST queued %u fan state refreshes",
+           static_cast<unsigned>(this->entities_.size()));
 }
 
 void FanHandler::dump_config() {

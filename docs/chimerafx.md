@@ -108,6 +108,12 @@ the CFX-owned bus to broadcast those raw bytes. The frame never becomes a CFX
 message. This separation is why both components can share one protocol carrier
 without confusing their application behavior.
 
+Both application protocols have their own authenticated recovery request:
+ChimeraFX uses `SYNC_REQUEST` inside `CFXS`, while Synchrocast uses
+`STATE_REQUEST` inside `SCST`. They express the same recovery idea but cannot be
+decoded interchangeably. When CFX owns the transport, it simply carries the
+Synchrocast request bytes; Synchrocast remains responsible for answering them.
+
 ## 4. Transport Rules
 
 For normal use, leave both components on `transport: auto`.

@@ -29,6 +29,8 @@ struct SynchrocastDispatcherStats {
   uint32_t invalid{0};
   uint32_t dispatched{0};
   uint32_t heartbeats{0};
+  uint32_t state_requests{0};
+  uint32_t state_requests_suppressed{0};
   uint32_t no_handler{0};
 };
 
@@ -65,6 +67,7 @@ class SynchrocastDispatcher final {
   SynchrocastDispatcherStats stats_{};
   uint32_t last_drop_log_ms_{0};
   uint32_t last_reported_drops_{0};
+  uint32_t last_state_request_ms_{0};
 };
 
 }  // namespace synchrocast

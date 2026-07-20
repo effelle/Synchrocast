@@ -145,6 +145,28 @@ void SynchrocastDispatcher::loop() {
       continue;
     }
 
+    if (packet.msg_type == SynchrocastMessageType::STATE_REQUEST) {
+      const uint32_t now = millis();
+      if (this->last_state_request_ms_ != 0 &&
+          now - this->last_state_request_ms_ < 500) {
+        this->stats_.state_requests_suppressed++;
+        ESP_LOGV(TAG, "Suppressed repeated STATE_REQUEST queue=%u",
+                 static_cast<unsigned>(remaining));
+        continue;
+      }
+      this->last_state_request_ms_ = now;
+      this->stats_.state_requests++;
+      for (auto *handler : this->handlers_) {
+        if (handler != nullptr) {
+          handler->on_state_request();
+        }
+      }
+      ESP_LOGV(TAG, "Processed STATE_REQUEST handlers=%u queue=%u",
+               static_cast<unsigned>(this->handler_count_),
+               static_cast<unsigned>(remaining));
+      continue;
+    }
+
     const size_t slot = static_cast<size_t>(packet.domain);
     auto *handler = slot < this->handlers_.size() ? this->handlers_[slot] : nullptr;
     if (handler == nullptr) {
@@ -205,9 +227,12 @@ void SynchrocastDispatcher::log_stats() {
   ESP_LOGV(TAG,
            "Stats received=%" PRIu32 " queued=%" PRIu32 " coalesced=%" PRIu32 " filtered=%" PRIu32
            " dropped=%" PRIu32
-           " invalid=%" PRIu32 " dispatched=%" PRIu32 " heartbeat=%" PRIu32 " no_handler=%" PRIu32,
+           " invalid=%" PRIu32 " dispatched=%" PRIu32
+           " heartbeat=%" PRIu32 " state_request=%" PRIu32
+           " request_suppressed=%" PRIu32 " no_handler=%" PRIu32,
            stats.received, stats.queued, stats.coalesced, stats.filtered,
            stats.dropped, stats.invalid, stats.dispatched, stats.heartbeats,
+           stats.state_requests, stats.state_requests_suppressed,
            stats.no_handler);
 #endif
 }
@@ -222,12 +247,13 @@ void SynchrocastDispatcher::on_transport_recovered() {
 
 bool SynchrocastDispatcher::is_valid_packet_(const SynchrocastPacket &packet) {
   const auto type = static_cast<uint8_t>(packet.msg_type);
-  if (type > static_cast<uint8_t>(SynchrocastMessageType::INTENT_REQUEST) ||
+  if (type > static_cast<uint8_t>(SynchrocastMessageType::STATE_REQUEST) ||
       packet.payload_len > sizeof(packet.payload.raw_bytes)) {
     return false;
   }
 
-  if (packet.msg_type == SynchrocastMessageType::HEARTBEAT) {
+  if (packet.msg_type == SynchrocastMessageType::HEARTBEAT ||
+      packet.msg_type == SynchrocastMessageType::STATE_REQUEST) {
     return packet.payload_len == 0;
   }
 

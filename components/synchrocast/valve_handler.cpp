@@ -16,6 +16,7 @@
 #include "esphome/core/log.h"
 
 #include <cinttypes>
+#include <cmath>
 
 namespace esphome {
 namespace synchrocast {
@@ -140,16 +141,20 @@ void ValveHandler::apply_canonical_state_(const SynchrocastPacket &packet,
             position > 1.0f) {
           ESP_LOGV(TAG, "Ignored invalid valve position hash=0x%08" PRIX32,
                    packet.entity_hash);
-        } else if (this->supports_position_[index]) {
+        } else if (this->supports_position_[index] &&
+                   std::fabs(entity->position - position) > 0.001f) {
           call.set_position(position);
           apply = true;
-        } else if (position == 0.0f) {
+        } else if (!this->supports_position_[index] && position == 0.0f &&
+                   entity->position != 0.0f) {
           call.set_command_close();
           apply = true;
-        } else if (position == 1.0f) {
+        } else if (!this->supports_position_[index] && position == 1.0f &&
+                   entity->position != 1.0f) {
           call.set_command_open();
           apply = true;
-        } else {
+        } else if (!this->supports_position_[index] && position != 0.0f &&
+                   position != 1.0f) {
           ESP_LOGV(TAG,
                    "Ignored unsupported intermediate valve position %.3f hash=0x%08" PRIX32,
                    position, packet.entity_hash);
@@ -173,6 +178,9 @@ void ValveHandler::apply_canonical_state_(const SynchrocastPacket &packet,
   if (apply) {
     call.perform();
     ESP_LOGV(TAG, "Applied canonical valve state hash=0x%08" PRIX32,
+             packet.entity_hash);
+  } else {
+    ESP_LOGV(TAG, "Refreshed matching canonical valve state hash=0x%08" PRIX32,
              packet.entity_hash);
   }
 }
@@ -234,12 +242,16 @@ void ValveHandler::loop() {
     return;
   }
   const uint32_t now = millis();
-  for (size_t i = 0; i < this->entities_.size(); i++) {
-    auto *entity = this->entities_.entity_at(i);
-    this->observe_(entity, this->published_[i]);
-    this->maybe_send_(this->entities_.hash_at(i), entity,
-                      this->published_[i], now);
+  if (this->entities_.size() == 0) {
+    return;
   }
+  const size_t i = this->publisher_cursor_;
+  this->publisher_cursor_ =
+      (this->publisher_cursor_ + 1) % this->entities_.size();
+  auto *entity = this->entities_.entity_at(i);
+  this->observe_(entity, this->published_[i]);
+  this->maybe_send_(this->entities_.hash_at(i), entity,
+                    this->published_[i], now);
 }
 
 void ValveHandler::on_transport_recovered() {
@@ -251,6 +263,19 @@ void ValveHandler::on_transport_recovered() {
         now + (this->entities_.hash_at(i) %
                (RECOVERY_JITTER_SPREAD_MS + 1));
   }
+}
+
+void ValveHandler::on_state_request() {
+  const uint32_t now = millis();
+  for (size_t i = 0; i < this->entities_.size(); i++) {
+    this->published_[i].pending = true;
+    this->published_[i].last_send_attempt_ms = 0;
+    this->published_[i].send_not_before_ms =
+        now + (this->entities_.hash_at(i) %
+               (RECOVERY_JITTER_SPREAD_MS + 1));
+  }
+  ESP_LOGV(TAG, "STATE_REQUEST queued %u valve state refreshes",
+           static_cast<unsigned>(this->entities_.size()));
 }
 
 void ValveHandler::dump_config() {

@@ -123,28 +123,18 @@ void TextSensorHandler::handle_state_broadcast(
              packet.entity_hash);
     return;
   }
-  if (receiver->owner_boot_id != 0 &&
-      receiver->owner_boot_id != packet.source_boot_id) {
-    const uint32_t now = millis();
-    if (receiver->last_conflict_log_ms == 0 ||
-        now - receiver->last_conflict_log_ms >= 60000) {
-      ESP_LOGW(TAG,
-               "Ignoring competing publisher for hash=0x%08" PRIX32
-               " owner=0x%08" PRIX32 " contender=0x%08" PRIX32,
-               packet.entity_hash, receiver->owner_boot_id,
-               packet.source_boot_id);
-      receiver->last_conflict_log_ms = now;
-    }
-    return;
-  }
-  receiver->owner_boot_id = packet.source_boot_id;
   receiver->last_received_ms = millis();
   receiver->seen = true;
 
   if (packet.intent == SynchrocastIntent::NONE && packet.payload_len == 0) {
-    receiver->entity->mark_unavailable();
-    ESP_LOGV(TAG, "Remote text sensor unavailable hash=0x%08" PRIX32,
-             packet.entity_hash);
+    if (receiver->entity->has_state()) {
+      receiver->entity->mark_unavailable();
+      ESP_LOGV(TAG, "Remote text sensor unavailable hash=0x%08" PRIX32,
+               packet.entity_hash);
+    } else {
+      ESP_LOGV(TAG, "Refreshed unchanged text unavailability hash=0x%08" PRIX32,
+               packet.entity_hash);
+    }
     return;
   }
   if (packet.intent != SynchrocastIntent::SET_VALUE ||
@@ -154,11 +144,17 @@ void TextSensorHandler::handle_state_broadcast(
              packet.entity_hash);
     return;
   }
-  receiver->entity->publish_state(
-      reinterpret_cast<const char *>(packet.payload.raw_bytes),
-      packet.payload_len);
-  ESP_LOGV(TAG, "Published remote text bytes=%u hash=0x%08" PRIX32,
-           static_cast<unsigned>(packet.payload_len), packet.entity_hash);
+  const char *value = reinterpret_cast<const char *>(packet.payload.raw_bytes);
+  if (receiver->entity->has_state() &&
+      receiver->entity->state.size() == packet.payload_len &&
+      memcmp(receiver->entity->state.data(), value, packet.payload_len) == 0) {
+    ESP_LOGV(TAG, "Refreshed unchanged text bytes=%u hash=0x%08" PRIX32,
+             static_cast<unsigned>(packet.payload_len), packet.entity_hash);
+  } else {
+    receiver->entity->publish_state(value, packet.payload_len);
+    ESP_LOGV(TAG, "Published remote text bytes=%u hash=0x%08" PRIX32,
+             static_cast<unsigned>(packet.payload_len), packet.entity_hash);
+  }
 }
 
 void TextSensorHandler::observe_(Publisher &publisher) {
@@ -247,29 +243,33 @@ void TextSensorHandler::maybe_send_(Publisher &publisher, uint32_t now) {
            publisher.entity_hash);
 }
 
-void TextSensorHandler::expire_receivers_(uint32_t now) {
-  for (uint8_t i = 0; i < this->receiver_count_; i++) {
-    auto &receiver = this->receivers_[i];
-    if (!receiver.seen || now - receiver.last_received_ms <
-                              RECEIVER_STALE_AFTER_MS) {
-      continue;
-    }
-    receiver.entity->mark_unavailable();
-    receiver.seen = false;
-    receiver.owner_boot_id = 0;
-    receiver.last_conflict_log_ms = 0;
-    ESP_LOGV(TAG, "Text receiver stale hash=0x%08" PRIX32,
-             receiver.entity_hash);
+void TextSensorHandler::expire_next_receiver_(uint32_t now) {
+  if (this->receiver_count_ == 0) {
+    return;
   }
+  auto &receiver = this->receivers_[this->receiver_cursor_];
+  this->receiver_cursor_ =
+      (this->receiver_cursor_ + 1) % this->receiver_count_;
+  if (!receiver.seen ||
+      now - receiver.last_received_ms < RECEIVER_STALE_AFTER_MS) {
+    return;
+  }
+  receiver.entity->mark_unavailable();
+  receiver.seen = false;
+  ESP_LOGV(TAG, "Text receiver stale hash=0x%08" PRIX32,
+           receiver.entity_hash);
 }
 
 void TextSensorHandler::loop() {
   const uint32_t now = millis();
-  for (uint8_t i = 0; i < this->publisher_count_; i++) {
-    this->observe_(this->publishers_[i]);
-    this->maybe_send_(this->publishers_[i], now);
+  if (this->publisher_count_ != 0) {
+    auto &publisher = this->publishers_[this->publisher_cursor_];
+    this->publisher_cursor_ =
+        (this->publisher_cursor_ + 1) % this->publisher_count_;
+    this->observe_(publisher);
+    this->maybe_send_(publisher, now);
   }
-  this->expire_receivers_(now);
+  this->expire_next_receiver_(now);
 }
 
 void TextSensorHandler::on_transport_recovered() {
@@ -282,6 +282,19 @@ void TextSensorHandler::on_transport_recovered() {
                (RECOVERY_JITTER_SPREAD_MS + 1));
   }
   ESP_LOGV(TAG, "Transport recovery queued %u text state refreshes",
+           static_cast<unsigned>(this->publisher_count_));
+}
+
+void TextSensorHandler::on_state_request() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < this->publisher_count_; i++) {
+    this->publishers_[i].pending = true;
+    this->publishers_[i].last_send_attempt_ms = 0;
+    this->publishers_[i].send_not_before_ms =
+        now + (this->publishers_[i].entity_hash %
+               (RECOVERY_JITTER_SPREAD_MS + 1));
+  }
+  ESP_LOGV(TAG, "STATE_REQUEST queued %u text state refreshes",
            static_cast<unsigned>(this->publisher_count_));
 }
 

@@ -221,7 +221,8 @@ class SynchrocastArchitectureTests(unittest.TestCase):
         source = CODEC_SOURCE.read_text(encoding="utf-8")
         combined = header + source
 
-        self.assertIn("HEADER_SIZE = 28", header)
+        self.assertIn("VERSION = 2", header)
+        self.assertIn("HEADER_SIZE = 34", header)
         self.assertIn("AUTH_TAG_SIZE = 16", header)
         self.assertIn("MAX_FRAME_SIZE", header)
         self.assertIn("SYNCHROCAST_TRANSPORT_MTU", header)
@@ -236,6 +237,8 @@ class SynchrocastArchitectureTests(unittest.TestCase):
         )
         self.assertIn("write_u32_", source)
         self.assertIn("read_u32_", source)
+        self.assertIn("packet.source_node_id.data()", source)
+        self.assertIn("synchrocast_node_id_is_zero", source)
         self.assertNotIn("memcpy(output.data(), &packet", source)
         for forbidden in ("std::vector", "std::map", "new ", "malloc("):
             self.assertNotIn(forbidden, combined)
@@ -257,10 +260,10 @@ class SynchrocastArchitectureTests(unittest.TestCase):
         self.assertIn("defined(USE_SYNCHROCAST_FAN)", types)
         self.assertIn("defined(USE_SYNCHROCAST_TEXT_SENSOR)", types)
         self.assertIn("defined(USE_SYNCHROCAST_COVER)", types)
-        self.assertIn("sizeof(SynchrocastPacket) == 112", types)
-        self.assertIn("sizeof(SynchrocastPacket) == 80", types)
-        self.assertIn("sizeof(SynchrocastPacket) == 48", types)
-        self.assertIn("sizeof(SynchrocastPacket) == 32", types)
+        self.assertIn("sizeof(SynchrocastPacket) == 100", types)
+        self.assertIn("sizeof(SynchrocastPacket) == 84", types)
+        self.assertIn("sizeof(SynchrocastPacket) == 52", types)
+        self.assertIn("sizeof(SynchrocastPacket) == 36", types)
         self.assertIn("QUEUE_CAPACITY = 16", dispatcher)
         self.assertIn("MAX_PACKETS_PER_LOOP = 4", dispatcher)
         self.assertIn(
@@ -289,6 +292,21 @@ class SynchrocastArchitectureTests(unittest.TestCase):
         self.assertIn("recovery_generation", runtime)
         self.assertIn("on_transport_recovered", component)
         self.assertIn("dispatcher_.on_transport_recovered()", component)
+
+    def test_stable_identity_and_authenticated_state_request(self):
+        component = COMPONENT_HEADER.read_text(encoding="utf-8") + COMPONENT_SOURCE.read_text(encoding="utf-8")
+        dispatcher = DISPATCHER_HEADER.read_text(encoding="utf-8") + (COMPONENT / "synchrocast_dispatcher.cpp").read_text(encoding="utf-8")
+        types = TYPES_HEADER.read_text(encoding="utf-8")
+
+        self.assertIn("SynchrocastNodeId", types)
+        self.assertIn("STATE_REQUEST = 3", types)
+        self.assertIn("get_mac_address_raw(this->node_id_.data())", component)
+        self.assertIn("random_bytes", component)
+        self.assertIn("accept_state_owner_", component)
+        self.assertIn("packet.source_node_id", component)
+        self.assertIn("STATE_REQUEST_ATTEMPTS = 3", component)
+        self.assertIn("on_state_request()", dispatcher)
+        self.assertIn("last_state_request_ms_ < 500", dispatcher)
 
     def test_observational_handlers_use_fixed_storage(self):
         files = (
@@ -325,9 +343,15 @@ class SynchrocastArchitectureTests(unittest.TestCase):
         self.assertIn("receiver->entity->publish_state(", text_sensor_source)
         self.assertIn("this->set_has_state(false)", text_sensor_source)
         for source in (sensor, binary, text_sensor_source):
-            self.assertIn("owner_boot_id", source)
-            self.assertIn("Ignoring competing publisher", source)
-            self.assertIn("expire_receivers_", source)
+            self.assertNotIn("owner_boot_id", source)
+            self.assertNotIn("Ignoring competing publisher", source)
+            self.assertIn("expire_next_receiver_", source)
+            self.assertIn("Refreshed unchanged", source)
+            self.assertIn("on_state_request()", source)
+
+        component = COMPONENT_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("accept_state_owner_", component)
+        self.assertIn("Ignored competing canonical leader", component)
 
         for header_path in (SENSOR_HEADER, BINARY_SENSOR_HEADER, TEXT_SENSOR_HEADER):
             header = header_path.read_text(encoding="utf-8")
