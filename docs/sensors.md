@@ -50,9 +50,11 @@ external_components:
     refresh: always
 ```
 
-The current `stage` implementation can exchange live packets by attaching to a
-configured ChimeraFX `cfx_sync` transport. If the device already uses
-ChimeraFX, add its repository too:
+That is sufficient for normal Synchrocast operation. On ESP32, `transport:
+auto` uses Synchrocast's ESP-NOW transport. On ESP8266 it uses Synchrocast UDP.
+
+Only add ChimeraFX when the device also needs its specialized light or Magic
+Button synchronization:
 
 ```yaml
 external_components:
@@ -62,9 +64,8 @@ external_components:
     refresh: always
 ```
 
-See [Using Synchrocast with ChimeraFX](chimerafx.md) for the complete shared
-transport setup. Without `cfx_sync`, the Synchrocast YAML and entities compile,
-but the standalone network backend is still pending.
+See [Using Synchrocast with ChimeraFX](chimerafx.md) for that optional shared
+transport setup.
 
 Store the Synchrocast key in `secrets.yaml`:
 
@@ -354,8 +355,8 @@ same device. YAML validation rejects that echo loop.
   is not copied over the network.
 - `stale_after` is shorter than the publisher's `refresh_interval`.
 - A text state is longer than 64 UTF-8 bytes.
-- The standalone backend is expected to work without a current `cfx_sync`
-  transport. That backend is not implemented on `stage` yet.
+- An ESP32 and ESP8266 are mixed in one group while both use `transport: auto`;
+  choose `transport: udp` on every member of that mixed-platform group.
 
 Use the focused logs in [Troubleshooting and Verbose Logs](troubleshooting.md)
 when checking any of these cases.

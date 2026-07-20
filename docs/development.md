@@ -8,13 +8,13 @@ can begin with [Getting Started](getting_started.md).
 Synchrocast is the canonical general synchronization component. It owns its
 application protocol, authentication, replay protection, queues, domain
 handlers, and native receiver entities. ChimeraFX is an optional transport
-provider, not Synchrocast's packet decoder.
+sharing partner, not Synchrocast's packet decoder or functional dependency.
 
 When `cfx_sync:` is configured, Synchrocast conditionally compiles a narrow
 adapter and borrows the already-running CFX ESP-NOW/UDP bus. Without CFX,
-Synchrocast reserves standalone ownership, but that network backend remains a
-future milestone. ChimeraFX is never auto-loaded merely because its repository
-files are present.
+Synchrocast compiles and owns its standalone transport. ESP32 `auto` selects
+ESP-NOW; ESP8266 `auto` selects UDP. ChimeraFX is never auto-loaded merely
+because its repository files are present.
 
 ESPHome `2026.7.0` is the current compatibility baseline. Older-version checks
 can be useful, but they do not replace a 2026.7 source-generation and firmware
@@ -83,9 +83,19 @@ There is exactly one transport owner on a device:
 
 | Configuration | Owner | Synchrocast state |
 | --- | --- | --- |
-| No `cfx_sync:` block | Synchrocast | `standalone backend pending` |
+| No `cfx_sync:` block | Synchrocast | `standalone active` |
 | Active compatible `cfx_sync:` block | `cfx_sync` | `attached to cfx_sync` |
 | CFX selected but unavailable or incompatible | None | `waiting` or `blocked`; no automatic fallback |
+
+The standalone backend is one shared, fixed-capacity owner for all Synchrocast
+groups on the device. It stores at most eight sink pointers. UDP polling handles
+at most four datagrams per millisecond/main-loop pass and uses a fixed 251-byte
+receive buffer so an oversized datagram can be detected without truncating it
+into a valid-looking frame. Standalone UDP defaults to port `39581`.
+
+All standalone groups on one device must resolve to the same transport and UDP
+port. This prevents multiple sockets or competing ESP-NOW owners. Code
+generation enforces the rule before firmware generation.
 
 In attached mode Synchrocast:
 
@@ -128,6 +138,8 @@ Core storage uses fixed compile-time bounds:
 | Dispatcher work | 4 packets per loop | Remaining packets wait |
 | Domain dispatch table | 16 pointer slots | 64 bytes on a 32-bit target |
 | Replay table | 8 boot sessions | Fixed array, oldest entry replaced |
+| Standalone group sinks | 8 pointers | One transport shared by all groups |
+| Standalone UDP receive | 251-byte stack buffer | At most 4 datagrams per poll |
 | Observational handler | 16 publishers plus 16 receivers per instantiated domain | No heap-backed map |
 | Component instances | 8 maximum | Matches shared-consumer bound |
 

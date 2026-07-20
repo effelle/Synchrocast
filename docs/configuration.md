@@ -240,15 +240,20 @@ synchrocast:
   transport: auto
 ```
 
-The standalone Synchrocast backend is still pending. For live traffic on the
-current `stage` branch, a valid `cfx_sync:` block must be configured on the same
-device. CFX remains the only ESP-NOW/UDP owner, while Synchrocast authenticates
-and decodes its own distinct `SCST` frames.
+Synchrocast owns and starts its transport. With `auto`, ESP32 uses ESP-NOW and
+ESP8266 uses UDP. Every member of one group must use the same transport. For a
+group containing both ESP32 and ESP8266 devices, set `transport: udp` on every
+member.
 
-Advanced users may request `espnow` or `udp`, but that transport must already be
-active in CFX. Attached UDP inherits CFX port `39580`; Synchrocast does not open
-another socket or manage a competing radio peer table. See
-[Using Synchrocast with ChimeraFX](chimerafx.md).
+Standalone UDP listens on port `39581` by default. `udp_port` can select another
+port, but every member and every Synchrocast group on that device must use the
+same value. ESP-NOW does not use a UDP port.
+
+ChimeraFX is optional. When a configured `cfx_sync:` is present for specialized
+light or Magic Button synchronization, it already owns the physical
+ESP-NOW/UDP resources. Synchrocast attaches to that owner while continuing to
+authenticate and decode its own distinct `SCST` protocol. Attached UDP inherits
+CFX port `39580`. See [Using Synchrocast with ChimeraFX](chimerafx.md).
 
 ## Base Options
 
@@ -266,7 +271,7 @@ another socket or manage a competing radio peer table. See
 | `text_sensors` | No | Empty | UTF-8 text `publish` and `receive` lists. |
 | `heartbeat` | No | `30s` | Authenticated presence packet interval; minimum `10s`. |
 | `transport` | No | `auto` | `auto`, `espnow`, or `udp`. |
-| `udp_port` | No | Attached `39580` | Optional check of the CFX-owned UDP port. Rejected in standalone mode for now. |
+| `udp_port` | No | Standalone `39581`; attached `39580` | UDP listen/broadcast port. Valid only when UDP is selected. |
 
 Light, Climate, Lock, Media Player, Switch, and control mappings remain planned
 and are currently rejected instead of being silently ignored.

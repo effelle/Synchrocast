@@ -5,40 +5,31 @@ receiving device gets a normal ESPHome sensor that can appear in Home Assistant
 and be used in automations. You do not need to create a template sensor on the
 receiver.
 
-> **Current `stage` limitation:** the authenticated Synchrocast protocol is
-> working, but its standalone ESP-NOW/UDP backend is not ready yet. Live packets
-> currently travel through an already configured ChimeraFX `cfx_sync` transport.
-> Without `cfx_sync`, the YAML still validates and the entities are created, but
-> no packets cross the network. See
-> [Using Synchrocast with ChimeraFX](chimerafx.md) before testing two devices.
+Synchrocast is the complete synchronization component. It uses its own ESP-NOW
+transport by default on ESP32 and UDP by default on ESP8266. ChimeraFX is not
+required.
 
 ## What You Need
 
 - Two ESPHome devices.
 - A working ESPHome YAML file for each device.
-- A valid `cfx_sync:` configuration on each device for live network transport
-  at this development stage.
 - One existing sensor on the publishing device. The receiver does not need the
   same hardware.
 
-ESP32 is the preferred target for low-latency ESP-NOW. CFX can also provide UDP
-where its own configuration enables it.
+ESP32 is the preferred target for low-latency ESP-NOW. ESP8266 uses UDP.
 
 ## Step 1: Add the Repositories
 
-Add both sources to every device that participates in the live test:
+Add Synchrocast to every participating device:
 
 ```yaml
 external_components:
-  - source: github://effelle/ChimeraFX@stage
-    refresh: always
-
   - source: github://effelle/Synchrocast@stage
     refresh: always
 ```
 
-Adding a repository makes its components available; it does not enable them.
-Keep the device's normal `esphome:`, Wi-Fi, and `cfx_sync:` configuration.
+Adding the repository makes Synchrocast available; the `synchrocast:` block
+enables it. Keep the device's normal `esphome:` and Wi-Fi configuration.
 
 `stage` is a development branch. `refresh: always` makes ESPHome check it on
 every build. Once stable releases exist, normal installations should pin a
@@ -60,9 +51,6 @@ eight characters; a longer unique passphrase is better. Synchrocast uses it to
 authenticate packets and detect modification. Sensor values are **not
 encrypted**, so do not use Synchrocast to broadcast secrets over an untrusted
 network.
-
-The ChimeraFX key and Synchrocast key belong to separate protocols. They may be
-different, and keeping them different is recommended.
 
 ## Step 3: Configure the Publishing Device
 
@@ -149,16 +137,16 @@ Add this temporarily to both devices:
 logger:
   level: VERBOSE
   logs:
-    cfx_sync.bus: VERBOSE
     synchrocast: VERBOSE
+    synchrocast.transport: VERBOSE
     synchrocast.dispatcher: VERBOSE
     synchrocast.sensor: VERBOSE
 ```
 
-At startup, look for `Transport state=attached to cfx_sync`. On the publishing
-device, `Broadcast numeric state` confirms that Synchrocast encoded and handed
-off the value. On the receiver, `Published remote numeric value` confirms that
-the authenticated packet reached the native sensor.
+At startup, look for `Transport state=standalone active`. On the publishing
+device, `Broadcast numeric state` confirms that Synchrocast encoded and sent
+the value. On the receiver, `Published remote numeric value` confirms that the
+authenticated packet reached the native sensor.
 
 Remove verbose logging after testing. Packet-level logs are intentionally not
 needed for normal operation.
@@ -194,3 +182,5 @@ the receiver unavailable instead of leaving an old reading looking current.
 - [Troubleshooting and Verbose Logs](troubleshooting.md) explains the most
   useful messages when a value does not arrive.
 - [Domains and Capabilities](domains.md) shows the status of actuator domains.
+- [Using Synchrocast with ChimeraFX](chimerafx.md) is only for devices that also
+  use ChimeraFX lights or Magic Buttons.

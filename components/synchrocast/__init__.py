@@ -8,6 +8,7 @@ import esphome.config_validation as cv
 from esphome.components import (
     binary_sensor,
     cover,
+    espnow,
     fan,
     sensor,
     text_sensor,
@@ -42,6 +43,7 @@ CONF_DELTA = "delta"
 CONF_HEARTBEAT = "heartbeat"
 CONF_TRANSPORT = "transport"
 CONF_UDP_PORT = "udp_port"
+CONF_INTERNAL_ESPNOW_ID = "_espnow_id"
 CONF_TRANSPORT_OWNER = "_transport_owner"
 CONF_COVER_HANDLER_ID = "_cover_handler_id"
 CONF_FAN_HANDLER_ID = "_fan_handler_id"
@@ -61,6 +63,7 @@ OWNER_SYNCHROCAST = "synchrocast"
 OWNER_CFX_SYNC = "cfx_sync"
 
 CFX_SYNC_UDP_PORT = 39580
+SYNCHROCAST_DEFAULT_UDP_PORT = 39581
 MAX_ENTITIES_PER_DOMAIN = 16
 MAX_COMPONENT_INSTANCES = 8
 MAX_TEXT_BYTES = 64
@@ -127,9 +130,37 @@ def _has_observable_bindings(item, option):
     )
 
 
+def _is_esp8266_target():
+    try:
+        return CORE.is_esp8266
+    except KeyError:
+        return False
+
+
+_ESPNOW_ID_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(CONF_INTERNAL_ESPNOW_ID): cv.use_id(
+            espnow.ESPNowComponent
+        ),
+    },
+    extra=cv.ALLOW_EXTRA,
+)
+
+
 def AUTO_LOAD(config):
     domains = {"hmac_sha256"}
-    for item in _iter_configs(config):
+    configs = _iter_configs(config)
+    if (
+        "cfx_sync" not in CORE.loaded_integrations
+        and not _is_esp8266_target()
+        and any(
+            item.get(CONF_TRANSPORT, TRANSPORT_AUTO)
+            in (TRANSPORT_AUTO, TRANSPORT_ESPNOW)
+            for item in configs
+        )
+    ):
+        domains.add("espnow")
+    for item in configs:
         if item.get(CONF_COVERS):
             domains.add("cover")
         if item.get(CONF_FANS):
@@ -182,6 +213,24 @@ def _resolve_transport_owner(config):
         if "cfx_sync" in CORE.loaded_integrations
         else OWNER_SYNCHROCAST
     )
+    return config
+
+
+def _validate_transport_dependencies(config):
+    if config[CONF_TRANSPORT_OWNER] == OWNER_CFX_SYNC:
+        config.pop(CONF_INTERNAL_ESPNOW_ID, None)
+        return config
+
+    transport = config[CONF_TRANSPORT]
+    if _is_esp8266_target():
+        if transport == TRANSPORT_ESPNOW:
+            raise cv.Invalid("transport: espnow is available only on ESP32")
+        config.pop(CONF_INTERNAL_ESPNOW_ID, None)
+        return config
+
+    if transport in (TRANSPORT_AUTO, TRANSPORT_ESPNOW):
+        return _ESPNOW_ID_SCHEMA(config)
+    config.pop(CONF_INTERNAL_ESPNOW_ID, None)
     return config
 
 
@@ -445,6 +494,7 @@ CONFIG_SCHEMA = cv.All(
     ).extend(cv.COMPONENT_SCHEMA),
     cv.only_on(["esp32", "esp8266"]),
     _resolve_transport_owner,
+    _validate_transport_dependencies,
     _validate_role_bindings,
 )
 
@@ -470,6 +520,7 @@ def _cfx_transport_set(sync_configs):
 def _validate_global_bindings(all_synchrocast):
     groups = set()
     group_hashes = {}
+    standalone_specs = set()
     receiver_ids = set()
     publisher_ids = set()
     for item in all_synchrocast:
@@ -488,6 +539,19 @@ def _validate_global_bindings(all_synchrocast):
                 "Synchrocast network; rename one of them"
             )
         group_hashes[group_hash] = group
+        if item[CONF_TRANSPORT_OWNER] == OWNER_SYNCHROCAST:
+            requested = item[CONF_TRANSPORT]
+            uses_udp = requested == TRANSPORT_UDP or (
+                requested == TRANSPORT_AUTO and _is_esp8266_target()
+            )
+            standalone_specs.add(
+                (
+                    TRANSPORT_UDP if uses_udp else TRANSPORT_ESPNOW,
+                    item.get(CONF_UDP_PORT, SYNCHROCAST_DEFAULT_UDP_PORT)
+                    if uses_udp
+                    else 0,
+                )
+            )
         for option in (
             CONF_SENSORS,
             CONF_BINARY_SENSORS,
@@ -508,6 +572,11 @@ def _validate_global_bindings(all_synchrocast):
         raise cv.Invalid(
             f"Synchrocast receiver '{entity_id}' cannot also be a publisher; "
             "this prevents network echo loops"
+        )
+    if len(standalone_specs) > 1:
+        raise cv.Invalid(
+            "all Synchrocast groups on one device must share the same "
+            "standalone transport and UDP port"
         )
 
 
@@ -533,10 +602,13 @@ def _final_validate(config):
         raise cv.Invalid("udp_port cannot be used with transport: espnow")
 
     if config[CONF_TRANSPORT_OWNER] != OWNER_CFX_SYNC:
-        if CONF_UDP_PORT in config:
+        uses_udp = config[CONF_TRANSPORT] == TRANSPORT_UDP or (
+            config[CONF_TRANSPORT] == TRANSPORT_AUTO
+            and _is_esp8266_target()
+        )
+        if CONF_UDP_PORT in config and not uses_udp:
             raise cv.Invalid(
-                "udp_port is not available until the standalone "
-                "Synchrocast transport backend is implemented; remove it"
+                "udp_port requires transport: udp (or auto on ESP8266)"
             )
         return config
 
@@ -694,6 +766,8 @@ async def to_code(config):
     owner = config[CONF_TRANSPORT_OWNER]
     if owner == OWNER_CFX_SYNC:
         cg.add_define("USE_SYNCHROCAST_CFX_SYNC_BRIDGE")
+    else:
+        cg.add_define("USE_SYNCHROCAST_STANDALONE_TRANSPORT")
     if config[CONF_COVERS]:
         cg.add_define("USE_SYNCHROCAST_COVER")
     if config[CONF_FANS]:
@@ -714,6 +788,32 @@ async def to_code(config):
         cg.add_define("USE_SYNCHROCAST_TEXT_SENSOR")
 
     key_bytes = [HexInt(value) for value in _derive_key(config[CONF_KEY])]
+    use_standalone_espnow = owner == OWNER_SYNCHROCAST and (
+        config[CONF_TRANSPORT] == TRANSPORT_ESPNOW
+        or (
+            config[CONF_TRANSPORT] == TRANSPORT_AUTO
+            and not _is_esp8266_target()
+        )
+    )
+    if use_standalone_espnow:
+        espnow_var = await cg.get_variable(config[CONF_INTERNAL_ESPNOW_ID])
+        if CORE.using_arduino:
+            cg.add_library("WiFi", None)
+        cg.add_define("USE_ESPNOW")
+        cg.add(espnow_var.set_auto_add_peer(False))
+        cg.add(var.set_espnow(espnow_var))
+
+    uses_standalone_udp = owner == OWNER_SYNCHROCAST and (
+        config[CONF_TRANSPORT] == TRANSPORT_UDP
+        or (
+            config[CONF_TRANSPORT] == TRANSPORT_AUTO
+            and _is_esp8266_target()
+        )
+    )
+    udp_port = config.get(
+        CONF_UDP_PORT,
+        SYNCHROCAST_DEFAULT_UDP_PORT if uses_standalone_udp else 0,
+    )
     cg.add(var.set_role(ROLE_MAP[config[CONF_ROLE]]))
     cg.add(var.set_group_hash(_fnv1a_32(config[CONF_GROUP])))
     cg.add(var.set_key(key_bytes))
@@ -721,7 +821,7 @@ async def to_code(config):
     cg.add(
         var.set_requested_transport(TRANSPORT_MAP[config[CONF_TRANSPORT]])
     )
-    cg.add(var.set_requested_udp_port(config.get(CONF_UDP_PORT, 0)))
+    cg.add(var.set_requested_udp_port(udp_port))
     cg.add(
         var.set_heartbeat_interval(
             config[CONF_HEARTBEAT].total_milliseconds

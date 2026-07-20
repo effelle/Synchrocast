@@ -24,11 +24,10 @@ enum class SynchrocastTransportOwner : uint8_t {
 
 enum class SynchrocastTransportState : uint8_t {
   UNCONFIGURED = 0,
-  STANDALONE_PENDING = 1,
-  STANDALONE_ACTIVE = 2,
-  WAITING_FOR_CFX_SYNC = 3,
-  ATTACHED_TO_CFX_SYNC = 4,
-  BLOCKED = 5,
+  STANDALONE_ACTIVE = 1,
+  WAITING_FOR_CFX_SYNC = 2,
+  ATTACHED_TO_CFX_SYNC = 3,
+  BLOCKED = 4,
 };
 
 enum class SynchrocastTransportKind : uint8_t {
@@ -87,6 +86,7 @@ class SynchrocastTransportBackend {
   virtual bool send_to(const SynchrocastTransportSource &destination,
                        const uint8_t *data, size_t size) = 0;
   virtual SynchrocastTransportBackendStatus status() const = 0;
+  virtual void loop() {}
 };
 
 const char *synchrocast_transport_owner_to_string(

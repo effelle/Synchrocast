@@ -36,17 +36,17 @@ group uses the same group name and private key.
 | `controller` | Reserved for command-only devices; mappings are still planned. |
 | `satellite` | Publishes local state while also receiving state; command mappings are still planned. |
 
-Begin with one leader and one follower. Live cross-device traffic on `stage`
-currently uses the shared transport supplied by a configured ChimeraFX
-`cfx_sync` instance; the standalone transport backend remains pending.
+Begin with one leader and one follower. Synchrocast supplies its own live
+transport: ESP-NOW by default on ESP32 and UDP by default on ESP8266.
+ChimeraFX is optional.
 
 ## Project Status
 
 Synchrocast is still under development. The authenticated wire codec,
 fixed-memory dispatcher, Cover/Fan/Valve receivers, Sensor/Binary Sensor/Text
 Sensor publisher and receiver entities, and automatic `cfx_sync` transport
-arbitration are implemented. The standalone transport backend and remaining
-actuator domains are still in development.
+arbitration are implemented together with the standalone transport backend.
+The remaining actuator domains are still in development.
 
 The planned public domain scope is:
 

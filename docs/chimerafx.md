@@ -4,6 +4,9 @@ This guide is for a device that needs both components. For example, ChimeraFX
 can synchronize a light and provide Magic Button behavior while Synchrocast
 receives a power sensor or prepares a Fan, Cover, or Valve receiver.
 
+Synchrocast does not require ChimeraFX. Use this page only when the same device
+also needs ChimeraFX's specialized features.
+
 The components do not merge their configurations or packet formats. They share
 only the already-running ESP-NOW/UDP transport:
 
@@ -13,8 +16,9 @@ only the already-running ESP-NOW/UDP transport:
 - CFX owns the radio/socket once, and Synchrocast uses that owner rather than
   starting a competing network stack.
 
-This is the current live transport path on `stage`. A standalone Synchrocast
-ESP-NOW/UDP backend is still pending.
+If ChimeraFX is later removed, Synchrocast returns to its own standalone
+transport after the YAML is rebuilt. Its groups and packet protocol do not
+change.
 
 ## 1. Add Both Repositories
 
@@ -124,8 +128,9 @@ For normal use, leave both components on `transport: auto`.
 - If CFX is configured but not ready, Synchrocast waits. It never silently
   falls back to another owner.
 
-Merely downloading the ChimeraFX repository is not enough. A valid `cfx_sync:`
-block must be configured because that running component is the transport owner.
+Merely downloading the ChimeraFX repository does not activate sharing. A valid
+`cfx_sync:` block must be configured before CFX becomes the transport owner;
+otherwise Synchrocast simply uses its own transport.
 
 ## 5. Focused Logs
 

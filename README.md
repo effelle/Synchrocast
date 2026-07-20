@@ -11,10 +11,9 @@ normal logging, and detailed diagnostics only when verbose logging is enabled.
 > **Development status:** Synchrocast is still a `stage` project. Its
 > authenticated application protocol, fixed-memory dispatcher, Cover/Fan/Valve
 > receivers, native Sensor/Binary Sensor/Text Sensor publisher and receiver
-> entities, and automatic `cfx_sync` transport arbitration are implemented.
-> Live traffic currently requires a configured ChimeraFX `cfx_sync` owner; the
-> standalone Synchrocast ESP-NOW/UDP backend and the remaining actuator domains
-> are still in development.
+> entities, standalone ESP-NOW/UDP transport, and optional `cfx_sync` transport
+> arbitration are implemented. The remaining actuator domains are still in
+> development.
 
 The current implementation is compatibility-checked against ESPHome `2026.7.0`.
 
@@ -56,9 +55,10 @@ external_components:
 The complete setup, role selection, and copy-paste examples are in the
 [Getting Started guide](docs/getting_started.md).
 
-If the same device also configures ChimeraFX `cfx_sync`, add both repositories.
-Synchrocast detects the active CFX transport automatically; no shared transport
-ID is required:
+ChimeraFX is not required. If the same device also uses ChimeraFX lights or
+Magic Buttons, add both repositories. Synchrocast detects the active CFX
+transport automatically so the components do not compete for radio/socket
+resources:
 
 ```yaml
 external_components:
@@ -104,10 +104,9 @@ synchrocast:
 ```
 
 Only `group`, key, and `sync_id` must match. Synchrocast creates the receiving
-sensor; no template is required. Live traffic on the current `stage` branch
-also requires a valid `cfx_sync:` transport on each device. The
-[sensor guide](docs/sensors.md) explains filters, update limits, availability,
-binary values, text values, and energy totals.
+sensor; no template is required. The [sensor guide](docs/sensors.md) explains
+filters, update limits, availability, binary values, text values, and energy
+totals.
 
 ## Documentation
 
@@ -137,8 +136,9 @@ The current application layer follows these rules:
   minimum and refresh intervals.
 - Duplicate packets and cross-transport copies are suppressed by authenticated
   boot/session sequence numbers.
-- A configured `cfx_sync` instance remains the only ESP-NOW/UDP owner;
-  Synchrocast attaches as a bounded raw-packet consumer.
+- Synchrocast owns ESP-NOW/UDP normally. If `cfx_sync` is configured,
+  Synchrocast attaches as a bounded raw-packet consumer instead of starting a
+  second transport.
 - Attached UDP sends can use fixed byte buffers without conversion to a dynamic
   packet container.
 - ESPHome entities are accessed only from the main loop.
@@ -155,6 +155,7 @@ logger:
   level: VERBOSE
   logs:
     synchrocast: VERBOSE
+    synchrocast.transport: VERBOSE
     synchrocast.dispatcher: VERBOSE
     synchrocast.cover: VERBOSE
     synchrocast.fan: VERBOSE

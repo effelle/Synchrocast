@@ -6,6 +6,7 @@
 #include "cfx_sync_transport_adapter.h"
 #include "synchrocast_dispatcher.h"
 #include "synchrocast_packet_codec.h"
+#include "synchrocast_standalone_transport.h"
 #include "synchrocast_transport_runtime.h"
 
 #include "esphome/core/component.h"
@@ -34,6 +35,11 @@ class SynchrocastComponent final : public Component,
   void set_heartbeat_interval(uint32_t interval_ms) {
     this->heartbeat_interval_ms_ = interval_ms;
   }
+#if defined(USE_SYNCHROCAST_STANDALONE_TRANSPORT) && defined(USE_ESPNOW)
+  void set_espnow(espnow::ESPNowComponent *espnow) {
+    global_synchrocast_standalone_transport().set_espnow(espnow);
+  }
+#endif
   bool register_domain_handler(SynchrocastDomainHandler *handler) {
     return this->dispatcher_.register_handler(handler);
   }

@@ -26,6 +26,17 @@ void SynchrocastComponent::setup() {
     this->boot_id_ = 1;
   }
   this->transport_runtime_.set_sink(this);
+#ifdef USE_SYNCHROCAST_STANDALONE_TRANSPORT
+  auto &standalone = global_synchrocast_standalone_transport();
+  if (!standalone.configure(this->requested_transport_,
+                            this->requested_udp_port_)) {
+    ESP_LOGE(TAG, "Standalone transport setup failed for group=0x%08" PRIX32,
+             this->group_hash_);
+    this->mark_failed();
+    return;
+  }
+  this->transport_runtime_.set_standalone_backend(&standalone);
+#endif
 #ifdef USE_SYNCHROCAST_CFX_SYNC_BRIDGE
   this->transport_runtime_.set_cfx_sync_backend(&this->cfx_sync_adapter_);
 #endif
@@ -76,7 +87,7 @@ void SynchrocastComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Transport state: %s",
                 synchrocast_transport_state_to_string(status.state));
   if (status.udp_port != 0) {
-    ESP_LOGCONFIG(TAG, "  Shared UDP port: %u",
+    ESP_LOGCONFIG(TAG, "  UDP port: %u",
                   static_cast<unsigned>(status.udp_port));
   }
   ESP_LOGCONFIG(TAG, "  Heartbeat interval: %" PRIu32 " ms",

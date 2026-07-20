@@ -9,8 +9,8 @@ when a value is missing or a device does not react.
 logger:
   level: VERBOSE
   logs:
-    cfx_sync.bus: VERBOSE
     synchrocast: VERBOSE
+    synchrocast.transport: VERBOSE
     synchrocast.dispatcher: VERBOSE
     synchrocast.sensor: VERBOSE
     synchrocast.binary_sensor: VERBOSE
@@ -22,6 +22,7 @@ logger:
 
 Keep only the domains you are testing. Remove verbose logging after setup;
 packet-by-packet output is unnecessarily noisy during normal operation.
+Add `cfx_sync.bus: VERBOSE` only when the same device also uses ChimeraFX.
 
 ## Follow a Value from Publisher to Receiver
 
@@ -56,17 +57,18 @@ ESPHome entity ID.
 
 ## Transport States
 
+### `standalone active`
+
+This is the normal state when ChimeraFX is not configured. Synchrocast owns its
+transport and packets can flow. ESP32 uses ESP-NOW with `transport: auto`;
+ESP8266 uses UDP.
+
 ### `attached to cfx_sync`
 
-This is the expected live state when the same YAML contains a valid `cfx_sync:`
-block. CFX owns the radio/socket and Synchrocast has registered its distinct
-authenticated protocol without creating another transport.
-
-### `standalone backend pending`
-
-No `cfx_sync:` owner was detected. The Synchrocast configuration and native
-entities still work locally, but the standalone ESP-NOW/UDP backend is not
-implemented on the current `stage` branch, so network packets do not flow.
+This is the expected state only when the same YAML contains a valid `cfx_sync:`
+block for ChimeraFX lights or Magic Buttons. CFX owns the radio/socket and
+Synchrocast has registered its distinct authenticated protocol without creating
+another transport.
 
 ### `waiting for cfx_sync`
 
@@ -76,9 +78,10 @@ fallback.
 
 ### `blocked`
 
-The explicit Synchrocast transport is not active in CFX, or a configured UDP
-port conflicts with inherited port `39580`. Return to `transport: auto`, remove
-the Synchrocast `udp_port`, and fix the CFX startup problem.
+Transport initialization failed or the request conflicts with the selected
+owner. In standalone mode, check platform support, Wi-Fi, and UDP port use. In
+attached mode, return to `transport: auto`, remove a conflicting
+Synchrocast `udp_port`, and inspect the CFX startup logs.
 
 ## Packet Rejections
 
@@ -124,7 +127,8 @@ frame for its group rather than letting unsafe data reach an ESPHome entity.
 - Confirm the source entity has a valid state.
 - Confirm it is listed under `publish`, not `receive`.
 - Confirm the Synchrocast role is `leader` or `satellite`.
-- Confirm the transport state is `attached to cfx_sync`.
+- Confirm the transport state is `standalone active` or, on a device that also
+  uses ChimeraFX, `attached to cfx_sync`.
 - Remember that `min_interval` limits retries as well as successful sends.
 
 A numeric `NaN` or infinite source is unavailable. Text that is invalid UTF-8

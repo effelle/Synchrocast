@@ -24,6 +24,8 @@ BINARY_SENSOR_HEADER = COMPONENT / "binary_sensor_handler.h"
 BINARY_SENSOR_SOURCE = COMPONENT / "binary_sensor_handler.cpp"
 TEXT_SENSOR_HEADER = COMPONENT / "text_sensor_handler.h"
 TEXT_SENSOR_SOURCE = COMPONENT / "text_sensor_handler.cpp"
+STANDALONE_HEADER = COMPONENT / "synchrocast_standalone_transport.h"
+STANDALONE_SOURCE = COMPONENT / "synchrocast_standalone_transport.cpp"
 
 
 class SynchrocastArchitectureTests(unittest.TestCase):
@@ -323,6 +325,43 @@ class SynchrocastArchitectureTests(unittest.TestCase):
 
         self.assertIn("setup_priority::LATE - 2.0f", header)
 
+    def test_standalone_transport_is_primary_and_fixed_storage(self):
+        header = STANDALONE_HEADER.read_text(encoding="utf-8")
+        source = STANDALONE_SOURCE.read_text(encoding="utf-8")
+        python = PY_COMPONENT.read_text(encoding="utf-8")
+        combined = header + source
+
+        self.assertIn("SYNCHROCAST_DEFAULT_UDP_PORT = 39581", header)
+        self.assertIn("MAX_SINKS = 8", header)
+        self.assertIn("MAX_UDP_PACKETS_PER_LOOP = 4", header)
+        self.assertIn("SYNCHROCAST_TRANSPORT_MTU + 1", source)
+        self.assertIn("global_synchrocast_standalone_transport", source)
+        self.assertIn("register_receive_handler(this)", source)
+        self.assertIn("register_unknown_peer_handler(this)", source)
+        self.assertIn("register_broadcast_handler(this)", source)
+        self.assertIn('cg.add_define("USE_SYNCHROCAST_STANDALONE_TRANSPORT")', python)
+        self.assertIn('domains.add("espnow")', python)
+        self.assertIn("var.set_espnow(espnow_var)", python)
+        for forbidden in (
+            "std::vector",
+            "std::function",
+            "std::map",
+            "new ",
+            "malloc(",
+        ):
+            self.assertNotIn(forbidden, combined)
+
+    def test_standalone_transport_is_connected_to_runtime(self):
+        component = COMPONENT_SOURCE.read_text(encoding="utf-8")
+        runtime = RUNTIME_SOURCE.read_text(encoding="utf-8")
+        transport = TRANSPORT.read_text(encoding="utf-8")
+
+        self.assertIn("standalone.configure", component)
+        self.assertIn("set_standalone_backend(&standalone)", component)
+        self.assertIn("this->active_backend_->loop();", runtime)
+        self.assertNotIn("STANDALONE_PENDING", transport + runtime)
+        self.assertIn('return "standalone active";', runtime)
+
     def test_transport_frames_use_builtin_codec_replay_and_role_checks(self):
         source = COMPONENT_SOURCE.read_text(encoding="utf-8")
         header = COMPONENT_HEADER.read_text(encoding="utf-8")
@@ -335,14 +374,6 @@ class SynchrocastArchitectureTests(unittest.TestCase):
         self.assertIn("std::array<ReplayState, 8>", header)
         self.assertIn("Rejected duplicate/stale frame", source)
         self.assertIn("authentication_failures_", source)
-
-    def test_missing_standalone_backend_is_reported_as_pending(self):
-        transport = TRANSPORT.read_text(encoding="utf-8")
-        runtime = RUNTIME_SOURCE.read_text(encoding="utf-8")
-
-        self.assertIn("STANDALONE_PENDING", transport)
-        self.assertIn('return "standalone backend pending";', runtime)
-
 
 if __name__ == "__main__":
     unittest.main()

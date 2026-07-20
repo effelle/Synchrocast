@@ -20,6 +20,9 @@
 #endif
 #include "synchrocast_dispatcher.h"
 #include "synchrocast_packet_codec.h"
+#ifdef USE_SYNCHROCAST_STANDALONE_TRANSPORT
+#include "synchrocast_standalone_transport.h"
+#endif
 #include "synchrocast_transport.h"
 #include "synchrocast_transport_runtime.h"
 #include "synchrocast_types.h"

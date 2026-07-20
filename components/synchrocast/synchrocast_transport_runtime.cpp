@@ -33,23 +33,15 @@ bool SynchrocastTransportRuntime::configure(
         SynchrocastTransportState::WAITING_FOR_CFX_SYNC;
   } else if (owner == SynchrocastTransportOwner::SYNCHROCAST) {
     this->active_backend_ = this->standalone_backend_;
-    this->status_.state = this->active_backend_ == nullptr
-                              ? SynchrocastTransportState::STANDALONE_PENDING
-                              : SynchrocastTransportState::STANDALONE_ACTIVE;
+    this->status_.state = SynchrocastTransportState::STANDALONE_ACTIVE;
   } else {
     this->block_();
     return false;
   }
 
-  // The standalone transport codec is intentionally a separate implementation
-  // step. Selecting standalone ownership remains valid without a backend so
-  // decoded packets can still be injected into the application dispatcher.
   if (this->active_backend_ == nullptr) {
-    if (owner == SynchrocastTransportOwner::CFX_SYNC) {
-      this->block_();
-      return false;
-    }
-    return true;
+    this->block_();
+    return false;
   }
 
   if (!this->active_backend_->attach(this->sink_)) {
@@ -67,6 +59,7 @@ void SynchrocastTransportRuntime::refresh() {
     return;
   }
 
+  this->active_backend_->loop();
   const auto backend_status = this->active_backend_->status();
   this->status_.active_transports = backend_status.active_transports;
   this->status_.udp_port = backend_status.udp_port;
@@ -178,8 +171,6 @@ const char *synchrocast_transport_owner_to_string(
 const char *synchrocast_transport_state_to_string(
     SynchrocastTransportState state) {
   switch (state) {
-    case SynchrocastTransportState::STANDALONE_PENDING:
-      return "standalone backend pending";
     case SynchrocastTransportState::STANDALONE_ACTIVE:
       return "standalone active";
     case SynchrocastTransportState::WAITING_FOR_CFX_SYNC:
