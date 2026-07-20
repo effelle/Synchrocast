@@ -126,8 +126,9 @@ For normal use, leave both components on `transport: auto`.
 - Synchrocast does not start or stop the shared radio, open a second socket,
   change the Wi-Fi channel, or maintain a competing peer table.
 - CFX remains responsible for physical channel recovery while it owns the
-  radio. Synchrocast observes a recovered shared transport and immediately
-  schedules a bounded refresh of its own latest semantic states.
+  radio. Its shared-transport API exposes a monotonic recovery generation;
+  Synchrocast consumes that exact rearm event and immediately schedules a
+  bounded refresh of its own latest semantic states.
 - If CFX is configured but not ready, Synchrocast waits. It never silently
   falls back to another owner.
 

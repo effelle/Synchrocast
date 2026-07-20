@@ -303,16 +303,10 @@ void FanHandler::observe_(fan::Fan *entity, PublishedState &state,
 void FanHandler::maybe_send_(uint32_t entity_hash, fan::Fan *entity,
                              PublishedState &state, size_t index,
                              uint32_t now) {
-  const bool refresh_due =
-      state.has_sent && now - state.last_sent_ms >= STATE_REFRESH_INTERVAL_MS;
-  if ((!state.pending && !refresh_due) ||
-      (state.send_not_before_ms != 0 &&
-       static_cast<int32_t>(now - state.send_not_before_ms) < 0) ||
-      (state.last_send_attempt_ms != 0 &&
-       now - state.last_send_attempt_ms < STATE_RETRY_INTERVAL_MS)) {
+  if (!synchrocast_publisher_ready(state, now)) {
     return;
   }
-  state.last_send_attempt_ms = now;
+  synchrocast_publisher_attempted(state, now);
   SynchrocastPacket packet;
   packet.msg_type = SynchrocastMessageType::STATE_BROADCAST;
   packet.domain = SynchrocastDomain::FAN;
@@ -340,10 +334,7 @@ void FanHandler::maybe_send_(uint32_t entity_hash, fan::Fan *entity,
   if (this->parent_ == nullptr || !this->parent_->send_packet(packet)) {
     return;
   }
-  state.pending = false;
-  state.has_sent = true;
-  state.last_sent_ms = now;
-  state.send_not_before_ms = 0;
+  synchrocast_publisher_sent(state, now);
   ESP_LOGV(TAG,
            "Broadcast canonical fan power=%s speed=%u%% oscillating=%s hash=0x%08" PRIX32,
            state.power ? "ON" : "OFF",
@@ -369,28 +360,22 @@ void FanHandler::loop() {
                     this->published_[i], i, now);
 }
 
-void FanHandler::on_transport_recovered() {
+void FanHandler::queue_refresh_(const char *reason) {
   const uint32_t now = millis();
   for (size_t i = 0; i < this->entities_.size(); i++) {
-    this->published_[i].pending = true;
-    this->published_[i].last_send_attempt_ms = 0;
-    this->published_[i].send_not_before_ms =
-        now + (this->entities_.hash_at(i) %
-               (RECOVERY_JITTER_SPREAD_MS + 1));
+    synchrocast_queue_publisher_refresh(
+        this->published_[i], now, this->entities_.hash_at(i));
   }
+  ESP_LOGV(TAG, "%s queued %u fan state refreshes", reason,
+           static_cast<unsigned>(this->entities_.size()));
+}
+
+void FanHandler::on_transport_recovered() {
+  this->queue_refresh_("Transport recovery");
 }
 
 void FanHandler::on_state_request() {
-  const uint32_t now = millis();
-  for (size_t i = 0; i < this->entities_.size(); i++) {
-    this->published_[i].pending = true;
-    this->published_[i].last_send_attempt_ms = 0;
-    this->published_[i].send_not_before_ms =
-        now + (this->entities_.hash_at(i) %
-               (RECOVERY_JITTER_SPREAD_MS + 1));
-  }
-  ESP_LOGV(TAG, "STATE_REQUEST queued %u fan state refreshes",
-           static_cast<unsigned>(this->entities_.size()));
+  this->queue_refresh_("STATE_REQUEST");
 }
 
 void FanHandler::dump_config() {

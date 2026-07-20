@@ -130,9 +130,9 @@ rebuild and rebroadcast their latest semantic state with deterministic bounded
 jitter; raw packet history is never replayed.
 
 In attached mode, ChimeraFX remains responsible for physical radio recovery.
-The narrow adapter observes stable shared-channel changes and transport
-inactive-to-active transitions, then raises the same Synchrocast recovery event.
-It never sets the channel or rearms the shared radio itself.
+Shared-transport API v2 exposes ChimeraFX's monotonic recovery generation, so
+the narrow adapter consumes the owner's exact rearm event instead of polling
+the Wi-Fi channel. It never sets the channel or rearms the shared radio itself.
 
 Malformed or unsupported `CFXS` frames remain owned by ChimeraFX and are not
 offered to Synchrocast. A Synchrocast instance claims a same-group `SCST` frame
@@ -154,6 +154,11 @@ semantic validation fails, preventing unsafe fall-through.
    a reason to destabilize the node.
 8. Never silently truncate user data or reinterpret unavailable as a normal
    zero, `OFF`, or empty value.
+
+All publisher domains use one header-only scheduling policy for the fixed
+60-second repair refresh, 500 ms failed-send retry guard, and 0-750 ms recovery
+jitter. The helpers operate on fields already present in each publisher state;
+they add no scheduler object, allocation, or per-entity padding.
 
 ## Current Static Budget
 

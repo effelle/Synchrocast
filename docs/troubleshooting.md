@@ -77,8 +77,10 @@ Synchrocast has registered its distinct authenticated protocol without creating
 another transport.
 
 CFX owns physical channel recovery in this mode. Synchrocast observes the
-recovered shared transport and refreshes its own state; it does not rearm or
-change the CFX radio.
+recovery generation published by shared-transport API v2 and refreshes its own
+state; it does not poll, rearm, or change the CFX radio. With verbose logs,
+`Shared transport recovery generation=` confirms that ChimeraFX published a
+completed rearm to attached consumers.
 
 ### `waiting for cfx_sync`
 

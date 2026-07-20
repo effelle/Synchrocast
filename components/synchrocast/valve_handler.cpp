@@ -200,16 +200,10 @@ void ValveHandler::observe_(valve::Valve *entity, PublishedState &state) {
 
 void ValveHandler::maybe_send_(uint32_t entity_hash, valve::Valve *entity,
                                PublishedState &state, uint32_t now) {
-  const bool refresh_due =
-      state.has_sent && now - state.last_sent_ms >= STATE_REFRESH_INTERVAL_MS;
-  if ((!state.pending && !refresh_due) ||
-      (state.send_not_before_ms != 0 &&
-       static_cast<int32_t>(now - state.send_not_before_ms) < 0) ||
-      (state.last_send_attempt_ms != 0 &&
-       now - state.last_send_attempt_ms < STATE_RETRY_INTERVAL_MS)) {
+  if (!synchrocast_publisher_ready(state, now)) {
     return;
   }
-  state.last_send_attempt_ms = now;
+  synchrocast_publisher_attempted(state, now);
   SynchrocastPacket packet;
   packet.msg_type = SynchrocastMessageType::STATE_BROADCAST;
   packet.domain = SynchrocastDomain::VALVE;
@@ -227,10 +221,7 @@ void ValveHandler::maybe_send_(uint32_t entity_hash, valve::Valve *entity,
   if (this->parent_ == nullptr || !this->parent_->send_packet(packet)) {
     return;
   }
-  state.pending = false;
-  state.has_sent = true;
-  state.last_sent_ms = now;
-  state.send_not_before_ms = 0;
+  synchrocast_publisher_sent(state, now);
   ESP_LOGV(TAG,
            "Broadcast canonical valve position=%.3f operation=%u hash=0x%08" PRIX32,
            state.position, static_cast<unsigned>(state.operation), entity_hash);
@@ -254,28 +245,22 @@ void ValveHandler::loop() {
                     this->published_[i], now);
 }
 
-void ValveHandler::on_transport_recovered() {
+void ValveHandler::queue_refresh_(const char *reason) {
   const uint32_t now = millis();
   for (size_t i = 0; i < this->entities_.size(); i++) {
-    this->published_[i].pending = true;
-    this->published_[i].last_send_attempt_ms = 0;
-    this->published_[i].send_not_before_ms =
-        now + (this->entities_.hash_at(i) %
-               (RECOVERY_JITTER_SPREAD_MS + 1));
+    synchrocast_queue_publisher_refresh(
+        this->published_[i], now, this->entities_.hash_at(i));
   }
+  ESP_LOGV(TAG, "%s queued %u valve state refreshes", reason,
+           static_cast<unsigned>(this->entities_.size()));
+}
+
+void ValveHandler::on_transport_recovered() {
+  this->queue_refresh_("Transport recovery");
 }
 
 void ValveHandler::on_state_request() {
-  const uint32_t now = millis();
-  for (size_t i = 0; i < this->entities_.size(); i++) {
-    this->published_[i].pending = true;
-    this->published_[i].last_send_attempt_ms = 0;
-    this->published_[i].send_not_before_ms =
-        now + (this->entities_.hash_at(i) %
-               (RECOVERY_JITTER_SPREAD_MS + 1));
-  }
-  ESP_LOGV(TAG, "STATE_REQUEST queued %u valve state refreshes",
-           static_cast<unsigned>(this->entities_.size()));
+  this->queue_refresh_("STATE_REQUEST");
 }
 
 void ValveHandler::dump_config() {

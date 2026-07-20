@@ -6,13 +6,6 @@
 #ifdef USE_SYNCHROCAST_CFX_SYNC_BRIDGE
 
 #include "esphome/core/log.h"
-#include "esphome/core/hal.h"
-
-#if defined(USE_ESP32) && defined(USE_ESPNOW)
-#include <esp_wifi.h>
-#endif
-
-#include <cinttypes>
 
 namespace esphome {
 namespace synchrocast {
@@ -96,9 +89,7 @@ SynchrocastTransportBackendStatus CFXSyncTransportAdapter::status() const {
   SynchrocastTransportBackendStatus status;
   status.owner_present = bus.has_active_group();
   status.api_version = cfx_sync::CFX_SYNC_SHARED_TRANSPORT_API_VERSION;
-#if defined(USE_ESP32) && defined(USE_ESPNOW)
-  status.recovery_generation = this->recovery_generation_;
-#endif
+  status.recovery_generation = bus.recovery_generation();
   if (bus.is_espnow_ready()) {
     status.active_transports |= SYNCHROCAST_TRANSPORT_ESPNOW;
   }
@@ -107,45 +98,6 @@ SynchrocastTransportBackendStatus CFXSyncTransportAdapter::status() const {
     status.udp_port = bus.udp_port();
   }
   return status;
-}
-
-void CFXSyncTransportAdapter::loop() {
-#if defined(USE_ESP32) && defined(USE_ESPNOW)
-  const auto &bus = cfx_sync::global_cfx_sync_bus();
-  if (!bus.is_espnow_ready()) {
-    this->pending_channel_ = 0;
-    return;
-  }
-  uint8_t channel = 0;
-  wifi_second_chan_t secondary = WIFI_SECOND_CHAN_NONE;
-  if (esp_wifi_get_channel(&channel, &secondary) != ESP_OK || channel == 0) {
-    return;
-  }
-  if (!this->channel_seen_) {
-    this->channel_seen_ = true;
-    this->observed_channel_ = channel;
-    return;
-  }
-  if (channel == this->observed_channel_) {
-    this->pending_channel_ = 0;
-    return;
-  }
-  const uint32_t now = millis();
-  if (this->pending_channel_ != channel) {
-    this->pending_channel_ = channel;
-    this->pending_channel_since_ms_ = now;
-    return;
-  }
-  if (now - this->pending_channel_since_ms_ < CHANNEL_STABLE_MS) {
-    return;
-  }
-  this->observed_channel_ = channel;
-  this->pending_channel_ = 0;
-  this->recovery_generation_++;
-  ESP_LOGV(TAG,
-           "Shared ESP-NOW channel recovered on %u generation=%" PRIu32,
-           static_cast<unsigned>(channel), this->recovery_generation_);
-#endif
 }
 
 bool CFXSyncTransportAdapter::on_shared_transport_packet(

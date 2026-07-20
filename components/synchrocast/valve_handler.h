@@ -8,6 +8,7 @@
 #ifdef USE_SYNCHROCAST_VALVE
 
 #include "synchrocast_entity_registry.h"
+#include "synchrocast_publish_scheduler.h"
 #include "synchrocast_types.h"
 
 #include "esphome/components/valve/valve.h"
@@ -22,9 +23,6 @@ class SynchrocastComponent;
 class ValveHandler final : public SynchrocastDomainHandler {
  public:
   static constexpr size_t MAX_ENTITIES = 16;
-  static constexpr uint32_t STATE_REFRESH_INTERVAL_MS = 60000;
-  static constexpr uint32_t STATE_RETRY_INTERVAL_MS = 500;
-  static constexpr uint32_t RECOVERY_JITTER_SPREAD_MS = 750;
 
   void set_parent(SynchrocastComponent *parent) { this->parent_ = parent; }
   SynchrocastDomain get_domain() const override {
@@ -59,6 +57,7 @@ class ValveHandler final : public SynchrocastDomainHandler {
   void observe_(valve::Valve *entity, PublishedState &state);
   void maybe_send_(uint32_t entity_hash, valve::Valve *entity,
                    PublishedState &state, uint32_t now);
+  void queue_refresh_(const char *reason);
 
   SynchrocastComponent *parent_{nullptr};
   SynchrocastEntityRegistry<valve::Valve, MAX_ENTITIES> entities_;

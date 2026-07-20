@@ -8,6 +8,7 @@
 #ifdef USE_SYNCHROCAST_FAN
 
 #include "synchrocast_entity_registry.h"
+#include "synchrocast_publish_scheduler.h"
 #include "synchrocast_types.h"
 
 #include "esphome/components/fan/fan.h"
@@ -23,9 +24,6 @@ class FanHandler final : public SynchrocastDomainHandler {
  public:
   static constexpr size_t MAX_ENTITIES = 16;
   static constexpr size_t MAX_PRESET_BYTES = 64;
-  static constexpr uint32_t STATE_REFRESH_INTERVAL_MS = 60000;
-  static constexpr uint32_t STATE_RETRY_INTERVAL_MS = 500;
-  static constexpr uint32_t RECOVERY_JITTER_SPREAD_MS = 750;
 
   void set_parent(SynchrocastComponent *parent) { this->parent_ = parent; }
   SynchrocastDomain get_domain() const override {
@@ -65,6 +63,7 @@ class FanHandler final : public SynchrocastDomainHandler {
   void observe_(fan::Fan *entity, PublishedState &state, size_t index);
   void maybe_send_(uint32_t entity_hash, fan::Fan *entity,
                    PublishedState &state, size_t index, uint32_t now);
+  void queue_refresh_(const char *reason);
 
   SynchrocastComponent *parent_{nullptr};
   SynchrocastEntityRegistry<fan::Fan, MAX_ENTITIES> entities_;

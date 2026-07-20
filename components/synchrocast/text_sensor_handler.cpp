@@ -196,21 +196,10 @@ void TextSensorHandler::observe_(Publisher &publisher) {
 }
 
 void TextSensorHandler::maybe_send_(Publisher &publisher, uint32_t now) {
-  const bool refresh_due =
-      publisher.has_sent &&
-      now - publisher.last_sent_ms >= STATE_REFRESH_INTERVAL_MS;
-  if (!publisher.pending && !refresh_due) {
+  if (!synchrocast_publisher_ready(publisher, now)) {
     return;
   }
-  if (publisher.send_not_before_ms != 0 &&
-      static_cast<int32_t>(now - publisher.send_not_before_ms) < 0) {
-    return;
-  }
-  if (publisher.last_send_attempt_ms != 0 &&
-      now - publisher.last_send_attempt_ms < STATE_RETRY_INTERVAL_MS) {
-    return;
-  }
-  publisher.last_send_attempt_ms = now;
+  synchrocast_publisher_attempted(publisher, now);
 
   SynchrocastPacket packet;
   packet.msg_type = SynchrocastMessageType::STATE_BROADCAST;
@@ -227,16 +216,13 @@ void TextSensorHandler::maybe_send_(Publisher &publisher, uint32_t now) {
   if (this->parent_ == nullptr || !this->parent_->send_packet(packet)) {
     return;
   }
-  publisher.has_sent = true;
   publisher.last_sent_available = publisher.current_available;
   publisher.last_sent_length = packet.payload_len;
   if (packet.payload_len != 0) {
     memcpy(publisher.last_sent_value.data(), packet.payload.raw_bytes,
            packet.payload_len);
   }
-  publisher.last_sent_ms = now;
-  publisher.send_not_before_ms = 0;
-  publisher.pending = false;
+  synchrocast_publisher_sent(publisher, now);
   ESP_LOGV(TAG, "Broadcast text %s bytes=%u hash=0x%08" PRIX32,
            publisher.current_available ? "state" : "unavailable",
            static_cast<unsigned>(publisher.current_length),
@@ -272,30 +258,22 @@ void TextSensorHandler::loop() {
   this->expire_next_receiver_(now);
 }
 
-void TextSensorHandler::on_transport_recovered() {
+void TextSensorHandler::queue_refresh_(const char *reason) {
   const uint32_t now = millis();
   for (uint8_t i = 0; i < this->publisher_count_; i++) {
-    this->publishers_[i].pending = true;
-    this->publishers_[i].last_send_attempt_ms = 0;
-    this->publishers_[i].send_not_before_ms =
-        now + (this->publishers_[i].entity_hash %
-               (RECOVERY_JITTER_SPREAD_MS + 1));
+    synchrocast_queue_publisher_refresh(
+        this->publishers_[i], now, this->publishers_[i].entity_hash);
   }
-  ESP_LOGV(TAG, "Transport recovery queued %u text state refreshes",
+  ESP_LOGV(TAG, "%s queued %u text state refreshes", reason,
            static_cast<unsigned>(this->publisher_count_));
 }
 
+void TextSensorHandler::on_transport_recovered() {
+  this->queue_refresh_("Transport recovery");
+}
+
 void TextSensorHandler::on_state_request() {
-  const uint32_t now = millis();
-  for (uint8_t i = 0; i < this->publisher_count_; i++) {
-    this->publishers_[i].pending = true;
-    this->publishers_[i].last_send_attempt_ms = 0;
-    this->publishers_[i].send_not_before_ms =
-        now + (this->publishers_[i].entity_hash %
-               (RECOVERY_JITTER_SPREAD_MS + 1));
-  }
-  ESP_LOGV(TAG, "STATE_REQUEST queued %u text state refreshes",
-           static_cast<unsigned>(this->publisher_count_));
+  this->queue_refresh_("STATE_REQUEST");
 }
 
 void TextSensorHandler::dump_config() {

@@ -27,6 +27,7 @@ TEXT_SENSOR_SOURCE = COMPONENT / "text_sensor_handler.cpp"
 STANDALONE_HEADER = COMPONENT / "synchrocast_standalone_transport.h"
 STANDALONE_SOURCE = COMPONENT / "synchrocast_standalone_transport.cpp"
 STATE_HEADER = COMPONENT / "synchrocast_state.h"
+PUBLISH_SCHEDULER = COMPONENT / "synchrocast_publish_scheduler.h"
 
 
 class SynchrocastArchitectureTests(unittest.TestCase):
@@ -82,12 +83,14 @@ class SynchrocastArchitectureTests(unittest.TestCase):
         source = ADAPTER_SOURCE.read_text(encoding="utf-8")
 
         self.assertIn(
-            "CFX_SYNC_SHARED_TRANSPORT_API_VERSION == 1", header
+            "CFX_SYNC_SHARED_TRANSPORT_API_VERSION == 2", header
         )
         self.assertIn("CFXSyncReceivePath::UNKNOWN_PEER", source)
         self.assertIn("SynchrocastReceivePath::UNKNOWN_PEER", source)
         self.assertIn("register_shared_transport_consumer(this)", source)
         self.assertIn("unregister_shared_transport_consumer(this)", source)
+        self.assertIn("bus.recovery_generation()", source)
+        self.assertNotIn("esp_wifi_get_channel", source)
 
     def test_cfx_adapter_supports_fixed_raw_send_and_detach(self):
         transport = TRANSPORT.read_text(encoding="utf-8")
@@ -356,7 +359,6 @@ class SynchrocastArchitectureTests(unittest.TestCase):
         for header_path in (SENSOR_HEADER, BINARY_SENSOR_HEADER, TEXT_SENSOR_HEADER):
             header = header_path.read_text(encoding="utf-8")
             self.assertIn("accepts_state_broadcast", header)
-            self.assertIn("STATE_REFRESH_INTERVAL_MS = 60000", header)
             self.assertIn("RECEIVER_STALE_AFTER_MS = 180000", header)
             for removed_field in (
                 "min_interval_ms",
@@ -365,6 +367,30 @@ class SynchrocastArchitectureTests(unittest.TestCase):
                 "last_attempt_ms",
             ):
                 self.assertNotIn(removed_field, header)
+
+    def test_publisher_scheduling_is_shared_without_per_entity_storage(self):
+        scheduler = PUBLISH_SCHEDULER.read_text(encoding="utf-8")
+        sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                SENSOR_SOURCE,
+                BINARY_SENSOR_SOURCE,
+                TEXT_SENSOR_SOURCE,
+                COMPONENT / "cover_handler.cpp",
+                COMPONENT / "fan_handler.cpp",
+                COMPONENT / "valve_handler.cpp",
+            )
+        )
+
+        self.assertIn("SYNCHROCAST_STATE_REFRESH_INTERVAL_MS = 60000", scheduler)
+        self.assertIn("SYNCHROCAST_STATE_RETRY_INTERVAL_MS = 500", scheduler)
+        self.assertIn("SYNCHROCAST_RECOVERY_JITTER_SPREAD_MS = 750", scheduler)
+        self.assertIn("template<typename State>", scheduler)
+        self.assertIn("no per-entity object", scheduler)
+        self.assertEqual(sources.count("synchrocast_publisher_ready("), 6)
+        self.assertEqual(sources.count("synchrocast_publisher_attempted("), 6)
+        self.assertEqual(sources.count("synchrocast_publisher_sent("), 6)
+        self.assertEqual(sources.count("synchrocast_queue_publisher_refresh("), 6)
 
     def test_dispatcher_filters_unwanted_state_before_queueing(self):
         header = DISPATCHER_HEADER.read_text(encoding="utf-8")

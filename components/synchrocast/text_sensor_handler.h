@@ -7,6 +7,7 @@
 
 #ifdef USE_SYNCHROCAST_TEXT_SENSOR
 
+#include "synchrocast_publish_scheduler.h"
 #include "synchrocast_types.h"
 
 #include "esphome/components/text_sensor/text_sensor.h"
@@ -26,9 +27,6 @@ class SynchrocastTextSensor final : public text_sensor::TextSensor {
 class TextSensorHandler final : public SynchrocastDomainHandler {
  public:
   static constexpr size_t MAX_ENTITIES = 16;
-  static constexpr uint32_t STATE_REFRESH_INTERVAL_MS = 60000;
-  static constexpr uint32_t STATE_RETRY_INTERVAL_MS = 500;
-  static constexpr uint32_t RECOVERY_JITTER_SPREAD_MS = 750;
   static constexpr uint32_t RECEIVER_STALE_AFTER_MS = 180000;
 
   void set_parent(SynchrocastComponent *parent) { this->parent_ = parent; }
@@ -77,6 +75,7 @@ class TextSensorHandler final : public SynchrocastDomainHandler {
   void observe_(Publisher &publisher);
   void maybe_send_(Publisher &publisher, uint32_t now);
   void expire_next_receiver_(uint32_t now);
+  void queue_refresh_(const char *reason);
 
   SynchrocastComponent *parent_{nullptr};
   std::array<Publisher, MAX_ENTITIES> publishers_{};
