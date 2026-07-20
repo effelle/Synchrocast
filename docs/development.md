@@ -48,15 +48,15 @@ never copied onto the network.
 | --- | --- | --- |
 | Signature and version | 5 | `SCST`, version `1` |
 | Message, domain, intent, role, flags | 5 | Flags are currently zero |
-| Payload length | 2 | Maximum 64 |
+| Payload length | 2 | Maximum 96 |
 | Group hash | 4 | Routes one raw frame among configured groups |
 | Sender boot ID | 4 | Random nonzero identity for one boot |
 | Sequence | 4 | Monotonic nonzero counter |
 | Entity hash | 4 | Observational share key or current actuator identity |
-| Payload | 0-64 | Explicit domain representation |
+| Payload | 0-96 | Explicit domain representation |
 | Authentication tag | 16 | Truncated HMAC-SHA256 over header and payload |
 
-The fixed header is 28 bytes and the largest authenticated frame is 108 bytes,
+The fixed header is 28 bytes and the largest authenticated frame is 140 bytes,
 well below the shared transport MTU of 250 bytes. Numeric payloads are four
 bytes, binary payloads one byte, and an unavailable value has no payload. Empty
 text is distinct from unavailable because its intent remains `SET_VALUE`.
@@ -74,8 +74,8 @@ Each outbound packet carries the current boot ID and a sequence. A fixed table
 tracks up to eight remote boot sessions. Equal or lower sequences are discarded
 before dispatch, which also suppresses the duplicate copy when one packet is
 received through both ESP-NOW and UDP. Sender roles are enforced after
-authentication: state comes from leader/satellite and intent comes from
-controller/satellite; every role may send a heartbeat.
+authentication: authoritative state comes from a leader and intent comes from
+a controller or satellite; every role may send a heartbeat.
 
 ## Transport Ownership and CFX Coexistence
 
@@ -107,6 +107,18 @@ In attached mode Synchrocast:
 - never opens another UDP socket;
 - never maintains a competing peer table.
 
+Standalone ESP-NOW monitors the active Wi-Fi channel. After a bounded offline
+grace period it rearms on internal fallback channel 6; when infrastructure
+returns or changes channel, it rearms again after a short stability window.
+Each successful rearm increments a recovery generation. Domain handlers then
+rebuild and rebroadcast their latest semantic state with deterministic bounded
+jitter; raw packet history is never replayed.
+
+In attached mode, ChimeraFX remains responsible for physical radio recovery.
+The narrow adapter observes stable shared-channel changes and transport
+inactive-to-active transitions, then raises the same Synchrocast recovery event.
+It never sets the channel or rearms the shared radio itself.
+
 Malformed or unsupported `CFXS` frames remain owned by ChimeraFX and are not
 offered to Synchrocast. A Synchrocast instance claims a same-group `SCST` frame
 after its signature/group routing decision even when later authentication or
@@ -132,9 +144,11 @@ Core storage uses fixed compile-time bounds:
 
 | Item | Current bound | Storage consequence |
 | --- | --- | --- |
-| Authenticated wire frame | 108 bytes maximum | One fixed encode buffer |
-| Application packet without Text Sensor | 32 bytes | 16-packet queue is 512 bytes |
-| Application packet with Text Sensor | 80 bytes | 16-packet queue is 1,280 bytes |
+| Authenticated wire frame | 140 bytes maximum | One fixed encode buffer |
+| Sensor-only application packet | 32 bytes | 16-packet queue is 512 bytes |
+| Cover or Valve application packet | 48 bytes | 16-packet queue is 768 bytes |
+| Text Sensor application packet | 80 bytes | 16-packet queue is 1,280 bytes |
+| Fan application packet | 112 bytes | 16-packet queue is 1,792 bytes |
 | Dispatcher work | 4 packets per loop | Remaining packets wait |
 | Domain dispatch table | 16 pointer slots | 64 bytes on a 32-bit target |
 | Replay table | 8 boot sessions | Fixed array, oldest entry replaced |
@@ -143,10 +157,10 @@ Core storage uses fixed compile-time bounds:
 | Observational handler | 16 leader sources or 16 receiver interests per instantiated domain | No heap-backed map |
 | Component instances | 8 maximum | Matches shared-consumer bound |
 
-Text Sensor is the only current domain that needs a 64-byte application
-payload. If no text sensor source or interest is configured, the preprocessor
-keeps each packet at 32 bytes and avoids the larger queue. The Text Sensor
-handler itself is also omitted when unused.
+Packet capacity follows the largest configured domain. Fan reserves a bounded
+96-byte payload so the full canonical state can include a preset name. Text
+Sensor reserves 64 bytes; Cover and Valve reserve 32; sensor-only builds retain
+the 16-byte payload and 32-byte packet. Every unused handler is omitted.
 
 Each observational handler reserves its source and interest tables only when
 that domain is configured. A text source keeps one fixed last-sent buffer;
@@ -210,9 +224,10 @@ Handlers are stored by numeric domain slot, making selection constant-time.
 They do not own source entities. Code generation registers existing publisher
 pointers and creates only explicitly configured receiver entities.
 
-Cover, Fan, and Valve handlers currently apply received state/intent packets.
-Their automatic outbound observation is not implemented. Numeric Sensor,
-Binary Sensor, and Text Sensor provide the complete publish/receive lifecycle.
+Cover, Fan, and Valve handlers observe leader state and broadcast a bounded
+canonical field set. Readers apply supported fields and skip unsupported or
+future fields independently. Numeric Sensor, Binary Sensor, and Text Sensor
+provide the immutable leader-source/read-only-receiver lifecycle.
 
 ## Logging Policy
 

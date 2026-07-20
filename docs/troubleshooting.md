@@ -63,12 +63,22 @@ This is the normal state when ChimeraFX is not configured. Synchrocast owns its
 transport and packets can flow. ESP32 uses ESP-NOW with `transport: auto`;
 ESP8266 uses UDP.
 
+With standalone ESP-NOW, verbose logs may report a scheduled fallback, a rearm,
+and `Transport recovered`. After Wi-Fi has been absent for the internal grace
+period, Synchrocast moves to channel 6. When Wi-Fi returns or changes channel,
+it rearms again and refreshes the leader's current semantic state. These are
+normal recovery messages, not a request to add YAML options.
+
 ### `attached to cfx_sync`
 
 This is the expected state only when the same YAML contains a valid `cfx_sync:`
 block for ChimeraFX lights or Magic Buttons. CFX owns the radio/socket and
 Synchrocast has registered its distinct authenticated protocol without creating
 another transport.
+
+CFX owns physical channel recovery in this mode. Synchrocast observes the
+recovered shared transport and refreshes its own state; it does not rearm or
+change the CFX radio.
 
 ### `waiting for cfx_sync`
 
@@ -196,14 +206,20 @@ open.
 
 ### `Rejected fan speed`
 
-Fan speed must be a whole level supported by the receiver. A three-speed fan
-accepts 1, 2, or 3, not a fraction or out-of-range value.
+This message refers to an invalid direct speed intent. Canonical fan state uses
+a percentage and maps it to the nearest level supported by the receiver.
 
 ### The Cover, Fan, or Valve leader does not transmit
 
-Automatic outbound observation for these actuator domains is not implemented
-yet. Their current lists register receive handlers. Sensor, Binary Sensor, and
-Text Sensor have the complete publisher/receiver path.
+- Confirm the entity ID exists locally and is listed in the leader's matching
+  `covers`, `fans`, or `valves` option.
+- Confirm the role is `leader`.
+- Confirm the transport is active.
+- Enable the matching domain's verbose log and look for `Broadcast canonical`.
+
+Messages such as `Ignored unsupported cover tilt` or `Ignored unsupported fan
+oscillation` are expected when devices have different capabilities. The
+receiver still applies every compatible field in the same state.
 
 ## Queue Pressure
 

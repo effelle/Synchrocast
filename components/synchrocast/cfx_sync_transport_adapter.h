@@ -30,6 +30,7 @@ class CFXSyncTransportAdapter final
   bool send_to(const SynchrocastTransportSource &destination,
                const uint8_t *data, size_t size) override;
   SynchrocastTransportBackendStatus status() const override;
+  void loop() override;
 
   bool on_shared_transport_packet(cfx_sync::CFXSyncReceivePath path,
                                   const cfx_sync::CFXSyncSource &source,
@@ -37,6 +38,14 @@ class CFXSyncTransportAdapter final
 
  protected:
   SynchrocastTransportPacketSink *sink_{nullptr};
+#if defined(USE_ESP32) && defined(USE_ESPNOW)
+  static constexpr uint32_t CHANNEL_STABLE_MS = 1500;
+  uint32_t recovery_generation_{0};
+  uint32_t pending_channel_since_ms_{0};
+  uint8_t observed_channel_{0};
+  uint8_t pending_channel_{0};
+  bool channel_seen_{false};
+#endif
 };
 
 }  // namespace synchrocast

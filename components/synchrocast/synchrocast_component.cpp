@@ -160,6 +160,16 @@ bool SynchrocastComponent::on_transport_packet(
   return true;
 }
 
+void SynchrocastComponent::on_transport_recovered(uint32_t generation) {
+  this->transport_recoveries_++;
+  this->last_heartbeat_ms_ = 0;
+  this->dispatcher_.on_transport_recovered();
+  ESP_LOGV(TAG,
+           "Transport recovered generation=%" PRIu32
+           "; canonical state refresh scheduled",
+           generation);
+}
+
 bool SynchrocastComponent::send_packet(const SynchrocastPacket &packet) {
   if (!this->role_allows_message_(this->role_, packet.msg_type)) {
     ESP_LOGV(TAG, "Local role=%s cannot send message type=%u",
@@ -248,8 +258,7 @@ bool SynchrocastComponent::role_allows_message_(
     return true;
   }
   if (type == SynchrocastMessageType::STATE_BROADCAST) {
-    return role == SynchrocastRole::LEADER ||
-           role == SynchrocastRole::SATELLITE;
+    return role == SynchrocastRole::LEADER;
   }
   return role == SynchrocastRole::CONTROLLER ||
          role == SynchrocastRole::SATELLITE;
@@ -324,13 +333,13 @@ void SynchrocastComponent::maybe_log_stats_() {
            " rx_claimed=%" PRIu32 " rx_authenticated=%" PRIu32
            " malformed=%" PRIu32 " auth_failed=%" PRIu32
            " replayed=%" PRIu32 " role_rejected=%" PRIu32
-           " enqueue_failed=%" PRIu32,
+           " enqueue_failed=%" PRIu32 " recoveries=%" PRIu32,
            this->packets_sent_, this->physical_frames_sent_,
            this->send_failures_, this->shared_frames_received_,
            this->shared_frames_claimed_, this->authenticated_packets_,
            this->malformed_packets_, this->authentication_failures_,
            this->replayed_packets_, this->role_rejections_,
-           this->enqueue_failures_);
+           this->enqueue_failures_, this->transport_recoveries_);
   this->dispatcher_.log_stats();
 #endif
 }

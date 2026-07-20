@@ -59,6 +59,7 @@ struct SynchrocastTransportBackendStatus {
   uint8_t active_transports{0};
   uint16_t udp_port{0};
   uint8_t api_version{0};
+  uint32_t recovery_generation{0};
 };
 
 struct SynchrocastTransportStatus {
@@ -74,6 +75,9 @@ class SynchrocastTransportPacketSink {
   virtual ~SynchrocastTransportPacketSink() = default;
   virtual bool on_transport_packet(const SynchrocastTransportSource &source,
                                    const uint8_t *data, size_t size) = 0;
+  virtual void on_transport_recovered(uint32_t generation) {
+    (void) generation;
+  }
 };
 
 class SynchrocastTransportBackend {

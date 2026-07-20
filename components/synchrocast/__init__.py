@@ -607,6 +607,7 @@ async def _register_entities(config, component, option, handler_id):
     if not entities:
         return
     handler = cg.new_Pvariable(config[handler_id])
+    cg.add(handler.set_parent(component))
     for entity_id in entities:
         entity = await cg.get_variable(entity_id)
         cg.add(

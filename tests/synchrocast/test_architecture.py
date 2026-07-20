@@ -26,6 +26,7 @@ TEXT_SENSOR_HEADER = COMPONENT / "text_sensor_handler.h"
 TEXT_SENSOR_SOURCE = COMPONENT / "text_sensor_handler.cpp"
 STANDALONE_HEADER = COMPONENT / "synchrocast_standalone_transport.h"
 STANDALONE_SOURCE = COMPONENT / "synchrocast_standalone_transport.cpp"
+STATE_HEADER = COMPONENT / "synchrocast_state.h"
 
 
 class SynchrocastArchitectureTests(unittest.TestCase):
@@ -253,14 +254,41 @@ class SynchrocastArchitectureTests(unittest.TestCase):
         types = TYPES_HEADER.read_text(encoding="utf-8")
         dispatcher = DISPATCHER_HEADER.read_text(encoding="utf-8")
 
-        self.assertIn("#ifdef USE_SYNCHROCAST_TEXT_SENSOR", types)
+        self.assertIn("defined(USE_SYNCHROCAST_FAN)", types)
+        self.assertIn("defined(USE_SYNCHROCAST_TEXT_SENSOR)", types)
+        self.assertIn("defined(USE_SYNCHROCAST_COVER)", types)
+        self.assertIn("sizeof(SynchrocastPacket) == 112", types)
         self.assertIn("sizeof(SynchrocastPacket) == 80", types)
+        self.assertIn("sizeof(SynchrocastPacket) == 48", types)
         self.assertIn("sizeof(SynchrocastPacket) == 32", types)
         self.assertIn("QUEUE_CAPACITY = 16", dispatcher)
         self.assertIn("MAX_PACKETS_PER_LOOP = 4", dispatcher)
         self.assertIn(
             "std::array<SynchrocastPacket, QUEUE_CAPACITY> queue_", dispatcher
         )
+
+    def test_canonical_state_is_bounded_and_forward_skippable(self):
+        state = STATE_HEADER.read_text(encoding="utf-8")
+        codec = CODEC_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("one-byte field ID, one-byte length", state)
+        self.assertIn("class CanonicalStateWriter", state)
+        self.assertIn("class CanonicalStateReader", state)
+        self.assertIn("canonical_payload_is_valid", state)
+        self.assertIn("SynchrocastIntent::CANONICAL_STATE", codec)
+        for forbidden in ("std::vector", "std::map", "new ", "malloc("):
+            self.assertNotIn(forbidden, state)
+
+    def test_transport_recovery_republishes_semantic_state(self):
+        standalone = STANDALONE_HEADER.read_text(encoding="utf-8") + STANDALONE_SOURCE.read_text(encoding="utf-8")
+        runtime = TRANSPORT.read_text(encoding="utf-8") + RUNTIME_SOURCE.read_text(encoding="utf-8")
+        component = COMPONENT_HEADER.read_text(encoding="utf-8") + COMPONENT_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn("FALLBACK_CHANNEL = 6", standalone)
+        self.assertIn("perform_espnow_rearm_", standalone)
+        self.assertIn("recovery_generation", runtime)
+        self.assertIn("on_transport_recovered", component)
+        self.assertIn("dispatcher_.on_transport_recovered()", component)
 
     def test_observational_handlers_use_fixed_storage(self):
         files = (

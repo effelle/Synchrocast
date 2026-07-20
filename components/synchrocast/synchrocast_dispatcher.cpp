@@ -212,6 +212,14 @@ void SynchrocastDispatcher::log_stats() {
 #endif
 }
 
+void SynchrocastDispatcher::on_transport_recovered() {
+  for (auto *handler : this->handlers_) {
+    if (handler != nullptr) {
+      handler->on_transport_recovered();
+    }
+  }
+}
+
 bool SynchrocastDispatcher::is_valid_packet_(const SynchrocastPacket &packet) {
   const auto type = static_cast<uint8_t>(packet.msg_type);
   if (type > static_cast<uint8_t>(SynchrocastMessageType::INTENT_REQUEST) ||
@@ -226,7 +234,8 @@ bool SynchrocastDispatcher::is_valid_packet_(const SynchrocastPacket &packet) {
   const auto domain = static_cast<uint8_t>(packet.domain);
   const auto intent = static_cast<uint8_t>(packet.intent);
   return domain > static_cast<uint8_t>(SynchrocastDomain::UNKNOWN) && domain < DOMAIN_SLOT_COUNT &&
-         intent <= static_cast<uint8_t>(SynchrocastIntent::SET_OPTION);
+         intent <=
+             static_cast<uint8_t>(SynchrocastIntent::CANONICAL_STATE);
 }
 
 bool SynchrocastDispatcher::pop_packet_(SynchrocastPacket &packet, uint8_t &remaining, uint32_t &dropped_total) {

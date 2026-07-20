@@ -61,6 +61,13 @@ void SynchrocastTransportRuntime::refresh() {
 
   this->active_backend_->loop();
   const auto backend_status = this->active_backend_->status();
+  const bool backend_active = backend_status.owner_present &&
+                              backend_status.active_transports != 0;
+  const bool recovered =
+      this->backend_status_seen_ &&
+      ((!this->backend_was_active_ && backend_active) ||
+       backend_status.recovery_generation !=
+           this->seen_recovery_generation_);
   this->status_.active_transports = backend_status.active_transports;
   this->status_.udp_port = backend_status.udp_port;
 
@@ -69,6 +76,10 @@ void SynchrocastTransportRuntime::refresh() {
         backend_status.active_transports == 0) {
       this->status_.state =
           SynchrocastTransportState::WAITING_FOR_CFX_SYNC;
+      this->backend_status_seen_ = true;
+      this->backend_was_active_ = false;
+      this->seen_recovery_generation_ =
+          backend_status.recovery_generation;
       return;
     }
     if (!this->backend_matches_request_(backend_status)) {
@@ -77,14 +88,21 @@ void SynchrocastTransportRuntime::refresh() {
     }
     this->status_.state =
         SynchrocastTransportState::ATTACHED_TO_CFX_SYNC;
-    return;
+  } else {
+    if (!this->backend_matches_request_(backend_status)) {
+      this->block_();
+      return;
+    }
+    this->status_.state = SynchrocastTransportState::STANDALONE_ACTIVE;
   }
 
-  if (!this->backend_matches_request_(backend_status)) {
-    this->block_();
-    return;
+  this->backend_status_seen_ = true;
+  this->backend_was_active_ = backend_active;
+  this->seen_recovery_generation_ = backend_status.recovery_generation;
+  if (recovered && this->sink_ != nullptr) {
+    this->sink_->on_transport_recovered(
+        backend_status.recovery_generation);
   }
-  this->status_.state = SynchrocastTransportState::STANDALONE_ACTIVE;
 }
 
 bool SynchrocastTransportRuntime::send_broadcast(

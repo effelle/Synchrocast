@@ -66,6 +66,18 @@ class SynchrocastComponent final : public Component,
 
   bool on_transport_packet(const SynchrocastTransportSource &source,
                            const uint8_t *data, size_t size) override;
+  void on_transport_recovered(uint32_t generation) override;
+
+  bool publishes_canonical_state() const {
+    return this->role_ == SynchrocastRole::LEADER;
+  }
+  bool applies_canonical_state() const {
+    return this->role_ == SynchrocastRole::FOLLOWER ||
+           this->role_ == SynchrocastRole::SATELLITE;
+  }
+  bool accepts_intent_requests() const {
+    return this->role_ == SynchrocastRole::LEADER;
+  }
 
   SynchrocastTransportStatus transport_status() const {
     return this->transport_runtime_.status();
@@ -121,6 +133,7 @@ class SynchrocastComponent final : public Component,
   uint32_t replayed_packets_{0};
   uint32_t role_rejections_{0};
   uint32_t enqueue_failures_{0};
+  uint32_t transport_recoveries_{0};
   uint16_t requested_udp_port_{0};
 };
 

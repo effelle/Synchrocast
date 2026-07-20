@@ -31,6 +31,10 @@ Sensor domains are immutable: only a leader maps share keys to local sources.
 Followers, controllers, and satellites may only list the share keys they want
 to read.
 
+Actuator state is also authoritative: the leader observes and broadcasts its
+configured Cover, Fan, and Valve entities. Followers and satellites apply the
+fields their local entity supports. They do not publish a competing state.
+
 ## Numeric Sensors
 
 Leader syntax maps a custom share key to an existing local ESPHome sensor:
@@ -142,6 +146,11 @@ synchrocast:
 Each value is the ID of an entity declared elsewhere in the same ESPHome file.
 Use the same entity ID on devices that represent the same shared actuator.
 
+The leader sends complete canonical state. A receiver applies supported fields
+and ignores unsupported optional fields without rejecting the rest. For
+example, a cover without tilt still follows position, and a fan without
+oscillation still follows power and speed.
+
 ## Multiple Values
 
 A leader may share up to 16 values per observational domain:
@@ -194,6 +203,12 @@ only when UDP is active.
 When the same device also configures `cfx_sync:`, Synchrocast attaches to its
 already-running transport. Synchrocast still owns its protocol, group, key,
 authentication, and domain filtering. ChimeraFX remains optional.
+
+Standalone ESP-NOW recovery needs no YAML. After Wi-Fi/channel loss,
+Synchrocast uses internal fallback channel 6, rearms the radio when needed, and
+rebroadcasts current state after recovery. When `cfx_sync` owns the physical
+transport, Synchrocast does not change its channel; it observes transport
+recovery and refreshes its own semantic state instead.
 
 ## Base Options
 

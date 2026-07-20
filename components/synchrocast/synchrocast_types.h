@@ -9,10 +9,13 @@
 namespace esphome {
 namespace synchrocast {
 
-static constexpr size_t SYNCHROCAST_WIRE_MAX_PAYLOAD_SIZE = 64;
-#ifdef USE_SYNCHROCAST_TEXT_SENSOR
-static constexpr size_t SYNCHROCAST_MAX_PAYLOAD_SIZE =
-    SYNCHROCAST_WIRE_MAX_PAYLOAD_SIZE;
+static constexpr size_t SYNCHROCAST_WIRE_MAX_PAYLOAD_SIZE = 96;
+#if defined(USE_SYNCHROCAST_FAN)
+static constexpr size_t SYNCHROCAST_MAX_PAYLOAD_SIZE = 96;
+#elif defined(USE_SYNCHROCAST_TEXT_SENSOR)
+static constexpr size_t SYNCHROCAST_MAX_PAYLOAD_SIZE = 64;
+#elif defined(USE_SYNCHROCAST_COVER) || defined(USE_SYNCHROCAST_VALVE)
+static constexpr size_t SYNCHROCAST_MAX_PAYLOAD_SIZE = 32;
 #else
 static constexpr size_t SYNCHROCAST_MAX_PAYLOAD_SIZE = 16;
 #endif
@@ -74,6 +77,7 @@ enum class SynchrocastIntent : uint8_t {
   SET_VALUE,
   SET_MODE,
   SET_OPTION,
+  CANONICAL_STATE,
 };
 
 union SynchrocastPayload {
@@ -98,9 +102,15 @@ struct SynchrocastPacket {
 
 static_assert(sizeof(SynchrocastPayload) == SYNCHROCAST_MAX_PAYLOAD_SIZE,
               "Synchrocast payload size changed");
-#ifdef USE_SYNCHROCAST_TEXT_SENSOR
+#if defined(USE_SYNCHROCAST_FAN)
+static_assert(sizeof(SynchrocastPacket) == 112,
+              "Synchrocast fan packet must remain bounded");
+#elif defined(USE_SYNCHROCAST_TEXT_SENSOR)
 static_assert(sizeof(SynchrocastPacket) == 80,
-              "Synchrocast packet must remain bounded");
+               "Synchrocast packet must remain bounded");
+#elif defined(USE_SYNCHROCAST_COVER) || defined(USE_SYNCHROCAST_VALVE)
+static_assert(sizeof(SynchrocastPacket) == 48,
+              "Synchrocast actuator packet must remain bounded");
 #else
 static_assert(sizeof(SynchrocastPacket) == 32,
               "Synchrocast packet must remain compact without text sensors");
@@ -115,6 +125,7 @@ class SynchrocastDomainHandler {
   }
   virtual void handle_intent(const SynchrocastPacket &packet) = 0;
   virtual void handle_state_broadcast(const SynchrocastPacket &packet) = 0;
+  virtual void on_transport_recovered() {}
   virtual void loop() {}
   virtual void dump_config() {}
 };

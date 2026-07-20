@@ -164,6 +164,15 @@ void BinarySensorHandler::maybe_send_(Publisher &publisher, uint32_t now) {
   if (!publisher.pending && !refresh_due) {
     return;
   }
+  if (publisher.send_not_before_ms != 0 &&
+      static_cast<int32_t>(now - publisher.send_not_before_ms) < 0) {
+    return;
+  }
+  if (publisher.last_send_attempt_ms != 0 &&
+      now - publisher.last_send_attempt_ms < STATE_RETRY_INTERVAL_MS) {
+    return;
+  }
+  publisher.last_send_attempt_ms = now;
 
   SynchrocastPacket packet;
   packet.msg_type = SynchrocastMessageType::STATE_BROADCAST;
@@ -181,6 +190,7 @@ void BinarySensorHandler::maybe_send_(Publisher &publisher, uint32_t now) {
   publisher.last_sent_available = publisher.current_available;
   publisher.last_sent_value = publisher.current_value;
   publisher.last_sent_ms = now;
+  publisher.send_not_before_ms = 0;
   publisher.pending = false;
   ESP_LOGV(TAG, "Broadcast binary %s value=%s hash=0x%08" PRIX32,
            publisher.current_available ? "state" : "unavailable",
@@ -210,6 +220,19 @@ void BinarySensorHandler::loop() {
     this->maybe_send_(this->publishers_[i], now);
   }
   this->expire_receivers_(now);
+}
+
+void BinarySensorHandler::on_transport_recovered() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < this->publisher_count_; i++) {
+    this->publishers_[i].pending = true;
+    this->publishers_[i].last_send_attempt_ms = 0;
+    this->publishers_[i].send_not_before_ms =
+        now + (this->publishers_[i].entity_hash %
+               (RECOVERY_JITTER_SPREAD_MS + 1));
+  }
+  ESP_LOGV(TAG, "Transport recovery queued %u binary state refreshes",
+           static_cast<unsigned>(this->publisher_count_));
 }
 
 void BinarySensorHandler::dump_config() {

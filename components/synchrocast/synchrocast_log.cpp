@@ -108,6 +108,8 @@ const char *synchrocast_intent_to_string(SynchrocastIntent intent) {
       return "SET_MODE";
     case SynchrocastIntent::SET_OPTION:
       return "SET_OPTION";
+    case SynchrocastIntent::CANONICAL_STATE:
+      return "CANONICAL_STATE";
     default:
       return "UNKNOWN_INTENT";
   }

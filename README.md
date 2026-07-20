@@ -10,7 +10,7 @@ normal logging, and detailed diagnostics only when verbose logging is enabled.
 
 > **Development status:** Synchrocast is still a `stage` project. Its
 > authenticated application protocol, fixed-memory dispatcher, Cover/Fan/Valve
-> handlers, native Sensor/Binary Sensor/Text Sensor leader sources and read-only
+> canonical state handlers, native Sensor/Binary Sensor/Text Sensor leader sources and read-only
 > entities, standalone ESP-NOW/UDP transport, and optional `cfx_sync` transport
 > arbitration are implemented. The remaining actuator domains are still in
 > development.
@@ -40,7 +40,7 @@ The topology uses four roles:
 | `leader` | Owns and publishes the main state for a synchronization group. |
 | `follower` | Receives state and exposes it as local ESPHome entities. |
 | `controller` | Reserved for command-only devices; control mappings are still planned. |
-| `satellite` | Publishes local state while also receiving state; local command mappings are still planned. |
+| `satellite` | Mirrors configured actuator state and may read selected sensors; local command mappings are still planned. |
 
 ## Repository Installation
 
@@ -117,11 +117,12 @@ read `id(meter_phase_2).state` directly. See the
 
 The current application layer follows these rules:
 
-- Authenticated frames are explicitly serialized, bounded to 108 bytes, and
+- Authenticated frames are explicitly serialized, bounded to 140 bytes, and
   protected by a truncated HMAC-SHA256 tag.
-- A decoded packet is copied into a fixed 16-slot ring buffer. A build without
-  Text Sensor uses a 32-byte packet (512-byte queue); enabling Text Sensor uses
-  an 80-byte packet (1,280-byte queue) for its bounded 64-byte UTF-8 value.
+- A decoded packet is copied into a fixed 16-slot ring buffer. A sensor-only
+  build uses a 32-byte packet (512-byte queue); Cover/Valve use 48-byte packets,
+  Text Sensor uses 80-byte packets, and Fan uses 112-byte packets for bounded
+  optional preset state.
 - At most four packets are dispatched per ESPHome loop iteration.
 - Repeated pending state for the same entity is coalesced without crossing a
   newer intent for that entity.
@@ -134,6 +135,11 @@ The current application layer follows these rules:
 - Synchrocast owns ESP-NOW/UDP normally. If `cfx_sync` is configured,
   Synchrocast attaches as a bounded raw-packet consumer instead of starting a
   second transport.
+- Standalone ESP-NOW detects router/channel loss, moves to internal fallback
+  channel 6 after a grace period, rearms after channel changes, and republishes
+  current semantic state with bounded jitter after recovery.
+- When ChimeraFX owns the physical transport, Synchrocast observes its recovery
+  and performs the same semantic state refresh without competing for the radio.
 - Attached UDP sends can use fixed byte buffers without conversion to a dynamic
   packet container.
 - ESPHome entities are accessed only from the main loop.

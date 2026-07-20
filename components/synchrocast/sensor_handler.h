@@ -27,6 +27,8 @@ class SensorHandler final : public SynchrocastDomainHandler {
  public:
   static constexpr size_t MAX_ENTITIES = 16;
   static constexpr uint32_t STATE_REFRESH_INTERVAL_MS = 60000;
+  static constexpr uint32_t STATE_RETRY_INTERVAL_MS = 500;
+  static constexpr uint32_t RECOVERY_JITTER_SPREAD_MS = 750;
   static constexpr uint32_t RECEIVER_STALE_AFTER_MS = 180000;
 
   void set_parent(SynchrocastComponent *parent) { this->parent_ = parent; }
@@ -39,6 +41,7 @@ class SensorHandler final : public SynchrocastDomainHandler {
   bool accepts_state_broadcast(uint32_t entity_hash) const override;
   void handle_intent(const SynchrocastPacket &packet) override;
   void handle_state_broadcast(const SynchrocastPacket &packet) override;
+  void on_transport_recovered() override;
   void loop() override;
   void dump_config() override;
 
@@ -47,6 +50,8 @@ class SensorHandler final : public SynchrocastDomainHandler {
     sensor::Sensor *source{nullptr};
     uint32_t entity_hash{0};
     uint32_t last_sent_ms{0};
+    uint32_t last_send_attempt_ms{0};
+    uint32_t send_not_before_ms{0};
     float current_value{0.0f};
     float last_sent_value{0.0f};
     bool observed{false};

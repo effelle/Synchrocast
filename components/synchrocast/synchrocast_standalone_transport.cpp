@@ -10,6 +10,11 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#if defined(USE_ESP32) && defined(USE_ESPNOW)
+#include "esphome/components/wifi/wifi_component.h"
+#include <esp_wifi.h>
+#endif
+
 #if defined(USE_ESP8266)
 #include <ESP8266WiFi.h>
 #else
@@ -21,6 +26,7 @@
 #include <unistd.h>
 #endif
 
+#include <cinttypes>
 #include <cstring>
 
 namespace esphome {
@@ -124,6 +130,9 @@ SynchrocastStandaloneTransport::status() const {
   SynchrocastTransportBackendStatus result;
   result.owner_present = this->sink_count_ != 0;
   result.api_version = 1;
+#if defined(USE_ESP32) && defined(USE_ESPNOW)
+  result.recovery_generation = this->recovery_generation_;
+#endif
   if (!this->ready_) {
     return result;
   }
@@ -152,6 +161,11 @@ bool SynchrocastStandaloneTransport::dispatch_(
 }
 
 void SynchrocastStandaloneTransport::loop() {
+#if defined(USE_ESP32) && defined(USE_ESPNOW)
+  if (this->kind_ == SynchrocastTransportKind::ESPNOW) {
+    this->monitor_espnow_channel_();
+  }
+#endif
   if (this->kind_ == SynchrocastTransportKind::UDP) {
     const uint32_t now = millis();
     if (this->last_udp_poll_ms_ == now) {
@@ -218,9 +232,156 @@ bool SynchrocastStandaloneTransport::begin_espnow_() {
     ESP_LOGV(TAG, "ESP-NOW broadcast peer add skipped: %s",
              esp_err_to_name(result));
   }
+#if defined(USE_ESP32)
+  this->last_wifi_channel_ = this->current_wifi_channel_();
+  this->last_wifi_connected_ = this->last_wifi_channel_ != 0;
+  if (!this->last_wifi_connected_) {
+    this->wifi_disconnected_since_ms_ = millis();
+  }
+#endif
   ESP_LOGI(TAG, "Standalone ESP-NOW transport ready");
   return true;
 }
+
+#if defined(USE_ESP32)
+uint8_t SynchrocastStandaloneTransport::current_wifi_channel_() const {
+#ifdef USE_WIFI
+  if (wifi::global_wifi_component != nullptr &&
+      wifi::global_wifi_component->is_connected()) {
+    const int32_t channel = wifi::global_wifi_component->get_wifi_channel();
+    if (channel > 0 && channel <= 14) {
+      return static_cast<uint8_t>(channel);
+    }
+  }
+#endif
+  return 0;
+}
+
+bool SynchrocastStandaloneTransport::apply_fallback_channel_() {
+  if (!this->offline_fallback_active_) {
+    return false;
+  }
+#ifdef USE_WIFI
+  if (wifi::global_wifi_component != nullptr &&
+      wifi::global_wifi_component->is_connected()) {
+    return false;
+  }
+#endif
+  esp_err_t result = esp_wifi_set_promiscuous(true);
+  if (result != ESP_OK) {
+    ESP_LOGW(TAG, "Could not prepare fallback channel %u: %s",
+             static_cast<unsigned>(FALLBACK_CHANNEL),
+             esp_err_to_name(result));
+    return false;
+  }
+  result = esp_wifi_set_channel(FALLBACK_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_promiscuous(false);
+  if (result != ESP_OK) {
+    ESP_LOGW(TAG, "Could not set fallback channel %u: %s",
+             static_cast<unsigned>(FALLBACK_CHANNEL),
+             esp_err_to_name(result));
+    return false;
+  }
+  return true;
+}
+
+void SynchrocastStandaloneTransport::schedule_espnow_rearm_(
+    uint8_t target_channel, const char *reason) {
+  const uint32_t now = millis();
+  uint32_t delay = ESPNOW_REARM_DELAY_MS;
+  if (this->last_rearm_ms_ != 0 &&
+      now - this->last_rearm_ms_ < ESPNOW_REARM_MIN_INTERVAL_MS) {
+    delay += ESPNOW_REARM_MIN_INTERVAL_MS -
+             (now - this->last_rearm_ms_);
+  }
+  this->rearm_target_channel_ = target_channel;
+  this->rearm_due_ms_ = now + delay;
+  this->rearm_pending_ = true;
+  ESP_LOGV(TAG, "ESP-NOW rearm scheduled after %s on channel %u",
+           reason, static_cast<unsigned>(target_channel));
+}
+
+void SynchrocastStandaloneTransport::perform_espnow_rearm_() {
+  if (!this->rearm_pending_ || this->espnow_ == nullptr) {
+    return;
+  }
+  const uint32_t now = millis();
+  if (static_cast<int32_t>(now - this->rearm_due_ms_) < 0) {
+    return;
+  }
+  this->rearm_pending_ = false;
+  this->espnow_->disable();
+  if (this->offline_fallback_active_ && !this->apply_fallback_channel_()) {
+    ESP_LOGW(TAG, "ESP-NOW fallback rearm deferred; channel %u unavailable",
+             static_cast<unsigned>(FALLBACK_CHANNEL));
+    this->schedule_espnow_rearm_(FALLBACK_CHANNEL, "fallback-retry");
+    return;
+  }
+  this->espnow_->enable();
+  const esp_err_t peer_result =
+      this->espnow_->add_peer(ESPNOW_BROADCAST_ADDRESS);
+  if (peer_result != ESP_OK && peer_result != ESP_ERR_ESPNOW_EXIST) {
+    ESP_LOGV(TAG, "ESP-NOW broadcast peer rearm skipped: %s",
+             esp_err_to_name(peer_result));
+  }
+  this->last_rearm_ms_ = now;
+  this->recovery_generation_++;
+  ESP_LOGV(TAG, "ESP-NOW recovered generation=%" PRIu32 " channel=%u",
+           this->recovery_generation_,
+           static_cast<unsigned>(this->rearm_target_channel_));
+}
+
+void SynchrocastStandaloneTransport::monitor_espnow_channel_() {
+  const uint32_t now = millis();
+  const uint8_t channel = this->current_wifi_channel_();
+  const bool connected = channel != 0;
+
+  if (connected) {
+    this->wifi_disconnected_since_ms_ = 0;
+    if (this->offline_fallback_active_) {
+      this->offline_fallback_active_ = false;
+      this->pending_wifi_channel_ = 0;
+      this->last_wifi_channel_ = channel;
+      this->last_wifi_connected_ = true;
+      ESP_LOGV(TAG, "Wi-Fi restored on channel %u; leaving fallback",
+               static_cast<unsigned>(channel));
+      this->schedule_espnow_rearm_(channel, "wifi-restored");
+    } else if (this->last_wifi_connected_ &&
+               this->last_wifi_channel_ != 0 &&
+               channel != this->last_wifi_channel_) {
+      if (this->pending_wifi_channel_ != channel) {
+        this->pending_wifi_channel_ = channel;
+        this->pending_wifi_channel_since_ms_ = now;
+      } else if (now - this->pending_wifi_channel_since_ms_ >=
+                 WIFI_CHANNEL_STABLE_MS) {
+        this->last_wifi_channel_ = channel;
+        this->pending_wifi_channel_ = 0;
+        this->schedule_espnow_rearm_(channel, "wifi-channel-change");
+      }
+    } else {
+      this->pending_wifi_channel_ = 0;
+      this->last_wifi_channel_ = channel;
+    }
+  } else {
+    this->pending_wifi_channel_ = 0;
+    if (this->last_wifi_connected_ ||
+        this->wifi_disconnected_since_ms_ == 0) {
+      this->wifi_disconnected_since_ms_ = now;
+    }
+    if (!this->offline_fallback_active_ &&
+        now - this->wifi_disconnected_since_ms_ >= WIFI_OFFLINE_GRACE_MS) {
+      this->offline_fallback_active_ = true;
+      ESP_LOGW(TAG,
+               "Wi-Fi offline; Synchrocast entering ESP-NOW fallback on channel %u",
+               static_cast<unsigned>(FALLBACK_CHANNEL));
+      this->schedule_espnow_rearm_(FALLBACK_CHANNEL, "wifi-offline");
+    }
+  }
+
+  this->last_wifi_connected_ = connected;
+  this->perform_espnow_rearm_();
+}
+#endif
 
 bool SynchrocastStandaloneTransport::send_espnow_(
     const uint8_t *mac, const uint8_t *data, size_t size) {

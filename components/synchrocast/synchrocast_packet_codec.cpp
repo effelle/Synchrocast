@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "synchrocast_packet_codec.h"
+#include "synchrocast_state.h"
 
 #include <cmath>
 #include <cstring>
@@ -102,7 +103,13 @@ bool SynchrocastPacketCodec::is_valid_packet_(
   }
 
   const bool unavailable = packet.intent == SynchrocastIntent::NONE &&
-                           packet.payload_len == 0;
+                            packet.payload_len == 0;
+  if (packet.intent == SynchrocastIntent::CANONICAL_STATE) {
+    return packet.msg_type == SynchrocastMessageType::STATE_BROADCAST &&
+           packet.domain < SynchrocastDomain::SENSOR &&
+           canonical_payload_is_valid(packet.payload.raw_bytes,
+                                      packet.payload_len);
+  }
   if (packet.domain == SynchrocastDomain::SENSOR) {
     return packet.msg_type == SynchrocastMessageType::STATE_BROADCAST &&
            (unavailable ||
@@ -204,7 +211,8 @@ SynchrocastDecodeResult SynchrocastPacketCodec::decode(
   const uint8_t raw_role = data[8];
   if (raw_type > static_cast<uint8_t>(SynchrocastMessageType::INTENT_REQUEST) ||
       raw_domain > static_cast<uint8_t>(SynchrocastDomain::TEXT_SENSOR) ||
-      raw_intent > static_cast<uint8_t>(SynchrocastIntent::SET_OPTION) ||
+      raw_intent >
+          static_cast<uint8_t>(SynchrocastIntent::CANONICAL_STATE) ||
       raw_role > static_cast<uint8_t>(SynchrocastRole::SATELLITE)) {
     return SynchrocastDecodeResult::UNSUPPORTED_TYPE;
   }

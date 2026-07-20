@@ -1,183 +1,323 @@
 # Domains and Capabilities
 
-Synchrocast uses one shared vocabulary across several ESPHome domains. The
-receiving entity applies only actions and state that make sense for its domain.
+Synchrocast follows one rule for every actuator:
 
-## Current Status
+> The leader broadcasts its complete current state. A receiver applies the
+> fields its local device supports and ignores unsupported optional fields.
 
-| Domain | YAML option | Common behavior | Status |
-| --- | --- | --- | --- |
-| Light | `lights` | On, off, toggle, brightness, color, color temperature, effects | Planned |
-| Cover | `covers` | Open, close, stop, toggle, position | Handler implemented |
-| Fan | `fans` | On, off, toggle, speed | Handler implemented |
-| Climate | `climates` | Target temperature, HVAC mode, climate state | Planned |
-| Lock | `locks` | Lock, unlock, lock state | Planned |
-| Media Player | `media_players` | Play, pause, volume, playback state | Planned |
-| Valve | `valves` | Open, close, stop, toggle, position | Handler implemented |
-| Switch | `switches` | On, off, toggle, switch state | Planned |
-| Sensor | `sensors` | Numeric leader source and native read-only entity | Implemented |
-| Binary Sensor | `binary_sensors` | On/off leader source and native read-only entity | Implemented |
-| Text Sensor | `text_sensors` | UTF-8 leader source and native read-only entity | Implemented |
+For example, a cover leader may report position and tilt. A satellite whose
+cover has no tilt support still follows the position; it quietly ignores only
+the tilt field. One unsupported feature never rejects the rest of a valid
+state.
 
-"Planned" means the domain belongs to the public Synchrocast scope but is not
-ready to configure in the current branch. Cover, Fan, and Valve currently have
-receive handlers; automatic outbound state observation for those actuator
-domains is still pending.
+The examples below show only the `synchrocast:` block. The named entities, such
+as `living_room_cover`, must already exist elsewhere in that device's normal
+ESPHome configuration.
+
+## What Works Today
+
+| Domain | YAML option | Current stage status |
+| --- | --- | --- |
+| Cover | `covers` | Complete canonical state path |
+| Fan | `fans` | Complete canonical state path |
+| Valve | `valves` | Complete canonical state path |
+| Sensor | `sensors` | Numeric leader source and read-only receiver |
+| Binary Sensor | `binary_sensors` | On/off leader source and read-only receiver |
+| Text Sensor | `text_sensors` | Text leader source and read-only receiver |
+| Light | `lights` | Planned; not accepted in YAML yet |
+| Climate | `climates` | Planned; not accepted in YAML yet |
+| Lock | `locks` | Planned; not accepted in YAML yet |
+| Media Player | `media_players` | Planned; not accepted in YAML yet |
+| Switch | `switches` | Planned; not accepted in YAML yet |
+
+“Planned” means the domain belongs to Synchrocast's intended scope, but the
+current `stage` branch will reject that option. The planned snippets are shown
+to explain the lean configuration shape, not as copy-and-paste configuration
+for today's build.
 
 ## Cover
 
-A cover can receive:
+A Cover leader shares position, optional tilt, and current operation. Open,
+close, stop, toggle, and position commands are available to the intent path.
+State itself is always absolute, never “toggle,” so nodes cannot drift into
+opposite states.
 
-- `open`
-- `close`
-- `stop`
-- `toggle` as a user intent
-- a position from `0%` closed to `100%` open
+Leader:
 
 ```yaml
 synchrocast:
-  id: garage_sync
-  role: follower
-  group: garage
+  role: leader
+  group: living_room
   key: !secret synchrocast_key
-  covers:
-    - garage_door
+  covers: living_room_cover
 ```
 
-A relative toggle is not accepted as a state broadcast. State synchronization
-uses absolute open, closed, or position information so devices cannot drift into
-opposite states.
+Follower or satellite:
+
+```yaml
+synchrocast:
+  role: satellite
+  group: living_room
+  key: !secret synchrocast_key
+  covers: living_room_cover
+```
+
+Use the same ESPHome entity ID on both devices. A receiver with no position
+support can still follow fully open and fully closed states. Intermediate
+positions are ignored on that receiver. A receiver without tilt applies the
+position and ignores tilt.
 
 ## Fan
 
-A fan can receive on, off, toggle, and speed changes:
+A Fan leader shares power and every optional feature it supports: speed,
+oscillation, direction, and preset. The receiver applies each field
+independently.
+
+Leader:
 
 ```yaml
 synchrocast:
-  id: bedroom_sync
+  role: leader
+  group: bedroom
+  key: !secret synchrocast_key
+  fans: bedroom_fan
+```
+
+Follower or satellite:
+
+```yaml
+synchrocast:
   role: follower
   group: bedroom
   key: !secret synchrocast_key
-  fans:
-    - bedroom_fan
+  fans: bedroom_fan
 ```
 
-Fan speed uses the whole speed levels supported by the receiving ESPHome fan. A
-three-speed fan accepts levels 1, 2, and 3. Synchrocast rejects fractional or
-out-of-range levels instead of silently changing them.
+Speed is sent as a percentage and translated to the nearest level supported by
+the receiving fan. This lets a three-speed fan follow a five-speed fan without
+sharing an impossible raw level. If the follower has no oscillation, direction,
+or matching preset support, those fields are ignored while power and speed
+continue to work.
 
 ## Valve
 
-A valve can receive open, close, stop, toggle, and position changes:
+A Valve leader shares absolute position and current operation. Open, close,
+stop, toggle, and position commands are available to the intent path.
+
+Leader:
 
 ```yaml
 synchrocast:
-  id: garden_sync
-  role: follower
+  role: leader
   group: garden
   key: !secret synchrocast_key
-  valves:
-    - irrigation_valve
+  valves: irrigation_valve
 ```
 
-Position runs from `0%` closed to `100%` open. The receiving valve still decides
-which capabilities it supports.
+Follower or satellite:
 
-## Light
+```yaml
+synchrocast:
+  role: satellite
+  group: garden
+  key: !secret synchrocast_key
+  valves: irrigation_valve
+```
 
-Light synchronization is planned for normal ESPHome light state such as power,
-brightness, supported color channels, and color temperature. A receiving light
-will ignore fields it cannot represent. For example, a monochrome light can
-follow power and brightness but cannot reproduce RGB color.
+Position is `0%` closed through `100%` open. A simple valve without position
+control can follow fully open and fully closed states; it ignores unsupported
+intermediate positions.
 
-### Brightness zero and a later turn-on
+## Numeric Sensor
 
-A brightness of `0%` means zero and must be preserved as zero. Synchrocast must
-not silently change it to `1%` or `100%` while the light is off. This keeps the
-reported state accurate and lets devices such as display backlights use their
-real minimum level.
+A numeric Sensor is immutable on the network: the leader reads an existing
+local sensor and receivers get a native read-only ESPHome sensor. No template
+sensor, publish switch, receive switch, or Synchrocast timing option is needed.
 
-There is one separate rule when the light is turned on again:
+Leader—the left side is your custom share key, and the right side is the local
+ESPHome sensor ID:
 
-- If the ON command includes a brightness, that brightness is used.
-- If the ON command does not include a brightness and the saved brightness is
-  `0%`, ESPHome starts the light at `100%`.
-- Receiving or reporting an OFF state does not perform that `100%` change.
+```yaml
+synchrocast:
+  role: leader
+  group: power_grid
+  key: !secret synchrocast_key
+  sensors:
+    meter_phase_2: phase_2_voltage
+```
 
-This follows ESPHome's
-[brightness-preservation behavior](https://github.com/esphome/esphome/pull/17103).
-The future Light handler and its simulations must keep the OFF state and the
-later ON action as two distinct events.
-
-## Climate
-
-Climate synchronization is planned for target temperature, operating mode, and
-the state fields supported by the receiving climate entity. The final handler
-must avoid applying unsupported HVAC modes.
-
-## Lock
-
-Lock synchronization is planned for lock and unlock intents plus absolute lock
-state. Security-sensitive state will use absolute broadcasts rather than
-relative toggles.
-
-## Media Player
-
-Media Player synchronization is planned for play, pause, volume, and supported
-playback state. Devices will apply only capabilities exposed by their ESPHome
-media player.
-
-## Switch
-
-Switch synchronization is planned for on, off, toggle intents, and absolute
-on/off state. Toggle is appropriate for a user command; synchronized state uses
-an absolute value.
-
-## Sensor, Binary Sensor, and Text Sensor
-
-Sensors report state and do not accept actuator commands.
-
-- Sensor carries one finite 32-bit numeric value.
-- Binary Sensor carries `ON`, `OFF`, or unavailable.
-- Text Sensor carries valid UTF-8 text up to 64 bytes, or unavailable.
-
-The leader maps a custom share key to an existing ESPHome entity. Followers and
-satellites list only the share keys they want to read. Synchrocast creates the
-read-only receiving entity, so no template is needed just to unpack a network
-value.
+Follower or satellite—list only the share keys this device needs:
 
 ```yaml
 synchrocast:
   role: follower
-  group: utility_room
+  group: power_grid
   key: !secret synchrocast_key
-  sensors: utility_voltage
+  sensors: meter_phase_2
 ```
 
-See [Sharing Sensors](sensors.md) for complete numeric, binary, and text
-examples.
+The receiver can use `id(meter_phase_2).state` in local automations. A second
+follower uses the same one-line `sensors: meter_phase_2` interest. The leader
+still sends one broadcast, not one packet per follower.
 
-## One Device with Several Domains
+## Binary Sensor
 
-A device can participate in several domains at the same time:
+A Binary Sensor carries `ON`, `OFF`, or unavailable. It is useful for presence,
+contacts, alarms, and other facts that receivers should read but never write
+back to the source.
+
+Leader:
 
 ```yaml
 synchrocast:
-  id: utility_room_sync
+  role: leader
+  group: workshop
+  key: !secret synchrocast_key
+  binary_sensors:
+    pump_running: local_pump_running
+```
+
+Follower or satellite:
+
+```yaml
+synchrocast:
+  role: follower
+  group: workshop
+  key: !secret synchrocast_key
+  binary_sensors: pump_running
+```
+
+The receiver gets a read-only entity with ID `pump_running`.
+
+## Text Sensor
+
+A Text Sensor carries a valid UTF-8 string up to 64 bytes, or unavailable. It
+is suitable for a status such as `Charging`, `Idle`, or an inverter mode. Text
+is never silently cut to fit.
+
+Leader:
+
+```yaml
+synchrocast:
+  role: leader
+  group: solar
+  key: !secret synchrocast_key
+  text_sensors:
+    inverter_status: local_inverter_status
+```
+
+Follower or satellite:
+
+```yaml
+synchrocast:
+  role: follower
+  group: solar
+  key: !secret synchrocast_key
+  text_sensors: inverter_status
+```
+
+The receiver reads the value as `id(inverter_status).state`.
+
+## Light — Planned
+
+Light will share power, brightness, supported color channels, color
+temperature, and effect state. A monochrome follower will apply power and
+brightness while ignoring RGB fields it cannot represent.
+
+Planned shape—do not add this option to the current `stage` build yet:
+
+```yaml
+synchrocast:
+  role: leader
+  group: hallway
+  key: !secret synchrocast_key
+  lights: hallway_light
+```
+
+A brightness of `0%` must remain zero while the light is off. On a later turn-on
+with no explicit brightness, ESPHome may choose `100%`; receiving an OFF state
+must not perform that change. This follows ESPHome's
+[brightness-preservation behavior](https://github.com/esphome/esphome/pull/17103).
+
+## Climate — Planned
+
+Climate will share current canonical state, target temperature, and supported
+HVAC mode fields. A receiver will ignore a mode its local climate entity does
+not support while applying the compatible fields.
+
+Planned shape—not accepted yet:
+
+```yaml
+synchrocast:
+  role: leader
+  group: upstairs
+  key: !secret synchrocast_key
+  climates: upstairs_thermostat
+```
+
+## Lock — Planned
+
+Lock will use absolute locked or unlocked state. User commands may request lock
+or unlock, but synchronized state will never use a relative toggle.
+
+Planned shape—not accepted yet:
+
+```yaml
+synchrocast:
+  role: leader
+  group: front_door
+  key: !secret synchrocast_key
+  locks: front_door_lock
+```
+
+## Media Player — Planned
+
+Media Player will share playback state, volume, and compatible optional fields.
+A receiver without a given capability will ignore that field and keep applying
+the rest.
+
+Planned shape—not accepted yet:
+
+```yaml
+synchrocast:
+  role: leader
+  group: whole_house_audio
+  key: !secret synchrocast_key
+  media_players: kitchen_speaker
+```
+
+## Switch — Planned
+
+Switch will share absolute on/off state. Toggle remains a user command only;
+using toggle as synchronized state could make two devices diverge.
+
+Planned shape—not accepted yet:
+
+```yaml
+synchrocast:
+  role: leader
+  group: utility
+  key: !secret synchrocast_key
+  switches: circulation_pump
+```
+
+## Several Domains in One Group
+
+Put all domains for one group in the same block. Only configured domains are
+compiled and reserve their fixed entity tables.
+
+```yaml
+synchrocast:
   role: leader
   group: utility_room
   key: !secret synchrocast_key
-  fans:
-    - ventilation_fan
-  valves:
-    - water_valve
+  fans: ventilation_fan
+  valves: water_valve
   sensors:
-    utility_room_temperature: room_temperature
+    room_temperature: local_room_temperature
+  binary_sensors:
+    leak_detected: local_leak_detected
 ```
 
-Only configured domains should create handlers and reserve their entity tables.
-This keeps small devices from paying the memory cost of unused domains.
-
-An observational handler uses fixed-capacity leader and interest tables.
-Text Sensor support also enables the larger 64-byte application payload; builds
-without text sensors retain the smaller packet and dispatcher queue footprint.
+For a complete multi-device example, see
+[One Sensor, Two Followers, and One Cover Satellite](example_sensor_cover.md).

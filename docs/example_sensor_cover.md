@@ -6,9 +6,8 @@ This example uses four ESPHome devices:
 2. two followers reading the sensor;
 3. one satellite mirroring the cover.
 
-> **Stage note:** sensor sharing works with this configuration now. The cover
-> lines show the intended lean share model; automatic outbound cover observation
-> is still under development in the current `stage` build.
+Both the sensor and cover paths in this example work in the current `stage`
+build.
 
 ## Add Synchrocast
 
@@ -92,6 +91,10 @@ synchrocast:
 The satellite intentionally omits `sensors`, so sensor broadcasts are rejected
 before they enter its packet queue. If this satellite also needs the numeric
 value, add `sensors: meter_phase_2`.
+
+The leader broadcasts the cover's complete canonical state. If the leader cover
+supports tilt but the satellite cover does not, the satellite still applies the
+position and ignores only the unsupported tilt field.
 
 ## What Must Match
 

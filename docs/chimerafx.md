@@ -82,9 +82,8 @@ different protocols:
 The keys do not need to match. Separate private keys make the boundary easier
 to understand and maintain.
 
-> The Sensor, Binary Sensor, and Text Sensor leader-to-reader paths are live.
-> Cover, Fan, and Valve currently have receive handlers, but their automatic
-> outbound state observers are not implemented yet.
+> Sensor, Binary Sensor, Text Sensor, Cover, Fan, and Valve all have complete
+> leader-to-reader state paths. The remaining actuator domains are planned.
 
 ## 3. What Happens to a Packet
 
@@ -120,12 +119,19 @@ For normal use, leave both components on `transport: auto`.
 - Attached UDP inherits CFX port `39580`.
 - Synchrocast does not start or stop the shared radio, open a second socket,
   change the Wi-Fi channel, or maintain a competing peer table.
+- CFX remains responsible for physical channel recovery while it owns the
+  radio. Synchrocast observes a recovered shared transport and immediately
+  schedules a bounded refresh of its own latest semantic states.
 - If CFX is configured but not ready, Synchrocast waits. It never silently
   falls back to another owner.
 
 Merely downloading the ChimeraFX repository does not activate sharing. A valid
 `cfx_sync:` block must be configured before CFX becomes the transport owner;
 otherwise Synchrocast simply uses its own transport.
+
+This does not reduce standalone Synchrocast. Without `cfx_sync:`, Synchrocast
+performs its own ESP-NOW channel-loss detection, internal channel-6 fallback,
+rearm, and semantic state refresh.
 
 ## 5. Focused Logs
 

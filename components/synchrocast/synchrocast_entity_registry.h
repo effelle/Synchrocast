@@ -61,6 +61,12 @@ template<typename EntityT, size_t Capacity> class SynchrocastEntityRegistry {
 
   size_t size() const { return this->size_; }
   static constexpr size_t capacity() { return Capacity; }
+  EntityT *entity_at(size_t index) const {
+    return index < this->size_ ? this->entries_[index].entity : nullptr;
+  }
+  uint32_t hash_at(size_t index) const {
+    return index < this->size_ ? this->entries_[index].entity_hash : 0;
+  }
 
  protected:
   struct Entry {

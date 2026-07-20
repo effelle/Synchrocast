@@ -50,6 +50,7 @@ class SynchrocastDispatcher final {
   uint8_t queue_depth();
   SynchrocastDispatcherStats get_stats();
   void log_stats();
+  void on_transport_recovered();
 
  protected:
   static bool is_valid_packet_(const SynchrocastPacket &packet);

@@ -34,7 +34,7 @@ group uses the same group name and private key.
 | `leader` | Holds and publishes the main state for the group. |
 | `follower` | Receives state as ordinary local ESPHome entities. |
 | `controller` | Reserved for command-only devices; mappings are still planned. |
-| `satellite` | Publishes local state while also receiving state; command mappings are still planned. |
+| `satellite` | Mirrors configured actuator state and may read selected sensors; command mappings are still planned. |
 
 Begin with one leader and one follower. Synchrocast supplies its own live
 transport: ESP-NOW by default on ESP32 and UDP by default on ESP8266.
@@ -43,9 +43,10 @@ ChimeraFX is optional.
 ## Project Status
 
 Synchrocast is still under development. The authenticated wire codec,
-fixed-memory dispatcher, Cover/Fan/Valve handlers, Sensor/Binary Sensor/Text
-Sensor leader sources and read-only entities, and automatic `cfx_sync` transport
-arbitration are implemented together with the standalone transport backend.
+fixed-memory dispatcher, canonical Cover/Fan/Valve state handlers,
+Sensor/Binary Sensor/Text Sensor leader sources and read-only entities, and
+automatic `cfx_sync` transport arbitration are implemented together with the
+standalone transport and channel-recovery backend.
 The remaining actuator domains are still in development.
 
 The planned public domain scope is:

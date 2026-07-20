@@ -44,6 +44,9 @@ class SynchrocastTransportRuntime {
   SynchrocastRequestedTransport requested_transport_{
       SynchrocastRequestedTransport::AUTO};
   uint16_t requested_udp_port_{0};
+  uint32_t seen_recovery_generation_{0};
+  bool backend_was_active_{false};
+  bool backend_status_seen_{false};
   bool configured_{false};
 };
 

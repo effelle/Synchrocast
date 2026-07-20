@@ -85,6 +85,13 @@ class SynchrocastStandaloneTransport final
 #ifdef USE_ESPNOW
   bool begin_espnow_();
   bool send_espnow_(const uint8_t *mac, const uint8_t *data, size_t size);
+#if defined(USE_ESP32)
+  void monitor_espnow_channel_();
+  uint8_t current_wifi_channel_() const;
+  bool apply_fallback_channel_();
+  void schedule_espnow_rearm_(uint8_t target_channel, const char *reason);
+  void perform_espnow_rearm_();
+#endif
 #endif
   bool begin_udp_(uint16_t port);
   void close_udp_();
@@ -104,6 +111,24 @@ class SynchrocastStandaloneTransport final
 #ifdef USE_ESPNOW
   espnow::ESPNowComponent *espnow_{nullptr};
   bool espnow_registered_{false};
+#if defined(USE_ESP32)
+  static constexpr uint8_t FALLBACK_CHANNEL = 6;
+  static constexpr uint32_t WIFI_OFFLINE_GRACE_MS = 5000;
+  static constexpr uint32_t WIFI_CHANNEL_STABLE_MS = 1500;
+  static constexpr uint32_t ESPNOW_REARM_DELAY_MS = 750;
+  static constexpr uint32_t ESPNOW_REARM_MIN_INTERVAL_MS = 5000;
+  uint32_t recovery_generation_{0};
+  uint32_t wifi_disconnected_since_ms_{0};
+  uint32_t pending_wifi_channel_since_ms_{0};
+  uint32_t rearm_due_ms_{0};
+  uint32_t last_rearm_ms_{0};
+  uint8_t last_wifi_channel_{0};
+  uint8_t pending_wifi_channel_{0};
+  uint8_t rearm_target_channel_{0};
+  bool last_wifi_connected_{false};
+  bool offline_fallback_active_{false};
+  bool rearm_pending_{false};
+#endif
 #endif
 
 #if defined(USE_ESP8266)

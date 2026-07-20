@@ -92,6 +92,11 @@ You normally omit `transport`:
 
 Standalone UDP uses port `39581` by default.
 
+Standalone ESP-NOW recovery is automatic. If the router disappears,
+Synchrocast waits through a short grace period, uses internal fallback channel
+6, and rearms when Wi-Fi returns or changes channel. The leader then refreshes
+its latest state. There is no recovery YAML to maintain.
+
 ## 6. Check the Logs
 
 Temporarily enable focused verbose logs:
@@ -144,6 +149,7 @@ queueing them.
 
 - [Four-device sensor and cover example](example_sensor_cover.md)
 - [Complete sensor guide](sensors.md)
+- [Examples and behavior for every domain](domains.md)
 - [Configuration reference](configuration.md)
 - [Troubleshooting](troubleshooting.md)
 - [Using Synchrocast with ChimeraFX](chimerafx.md)
