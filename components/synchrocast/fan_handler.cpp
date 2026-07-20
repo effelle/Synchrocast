@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Federico Leoni
 // SPDX-License-Identifier: MIT
 
+#include "esphome/core/defines.h"
+
+#ifdef USE_SYNCHROCAST_FAN
+
 #include "fan_handler.h"
 
 #include "synchrocast_log.h"
@@ -134,3 +138,5 @@ void FanHandler::dispatch_(const SynchrocastPacket &packet, bool state_broadcast
 
 }  // namespace synchrocast
 }  // namespace esphome
+
+#endif  // USE_SYNCHROCAST_FAN

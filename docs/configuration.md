@@ -1,12 +1,13 @@
 # Configuration Reference
 
-This page explains the planned `synchrocast:` YAML block. Begin with
+This page explains the `synchrocast:` YAML block. Begin with
 [Getting Started](getting_started.md) if you have not yet tested one leader and
 one follower.
 
-> The YAML integration is scheduled for Step 3 and is not present in the current
-> skeleton. This page defines the user-facing configuration that implementation
-> must follow.
+> The current schema registers Cover, Fan, and Valve entities and configures
+> transport ownership. Other domains and control mappings shown in the roadmap
+> are not accepted yet. Live network synchronization still awaits the
+> authenticated Synchrocast wire codec.
 
 ## Basic Block
 
@@ -22,12 +23,14 @@ synchrocast:
 
 - `role` describes what this device does in the group.
 - `group` separates one synchronized room or system from another.
-- `key` protects the group. Every member must use the same value.
+- `key` reserves the private passphrase for the authenticated wire codec. It is
+  validated now, but no live authentication occurs until that codec is added.
+  Every future group member will need the same value.
 - `id` gives the block a readable ESPHome ID and is strongly recommended.
 
 ## Adding Local Entities
 
-List an entity under the option that matches its ESPHome domain:
+The current implementation accepts Cover, Fan, and Valve IDs:
 
 ```yaml
 synchrocast:
@@ -36,26 +39,12 @@ synchrocast:
   group: living_room
   key: !secret synchrocast_key
 
-  lights:
-    - room_light
   covers:
     - room_blind
   fans:
     - room_fan
-  climates:
-    - room_thermostat
-  locks:
-    - front_door_lock
-  media_players:
-    - room_speaker
   valves:
     - irrigation_valve
-  switches:
-    - circulation_pump
-  sensors:
-    - room_temperature
-  binary_sensors:
-    - window_open
 ```
 
 Each item must be the ID of an entity already declared elsewhere in the same
@@ -100,40 +89,28 @@ synchrocast:
 A follower can list several local entities. Each one is matched by its ESPHome
 ID and domain.
 
-### Controller
+### Controller (control mappings are planned)
 
-A controller sends local input to a remote target and does not own a local
-synchronized target entity:
+A controller will send local input to a remote target without owning a local
+synchronized target entity. The role is accepted now, but the `controls`
+option is not implemented yet. This is the complete configuration currently
+accepted for that role:
 
 ```yaml
-binary_sensor:
-  - platform: gpio
-    id: bedroom_fan_button
-    name: "Bedroom Fan Button"
-    pin:
-      number: GPIO10
-      mode:
-        input: true
-        pullup: true
-      inverted: true
-
 synchrocast:
   id: bedroom_controller
   role: controller
   group: bedroom
   key: !secret synchrocast_key
-
-  controls:
-    - input: bedroom_fan_button
-      target: bedroom_fan
-      intent: toggle
 ```
 
-`target` is the remote entity ID. It must match the ID registered on the leader.
+It prepares the topology only; it does not send button commands in the current
+skeleton.
 
-### Satellite
+### Satellite (local control input is planned)
 
-A satellite owns local synchronized entities and can also send local input:
+A satellite can register a local supported entity now. Sending local button
+input is planned for the later control-mapping milestone:
 
 ```yaml
 synchrocast:
@@ -144,37 +121,20 @@ synchrocast:
 
   fans:
     - bedroom_fan
-
-  controls:
-    - input: bedroom_fan_button
-      target: bedroom_fan
-      intent: toggle
 ```
 
 Use `satellite` instead of `controller` whenever the device has a local entity
 that belongs to the synchronization group.
 
-## Control Mappings
+## Control Mappings (Planned)
 
-A control mapping connects one local input to one remote target:
+A control mapping will connect one local input to one remote target. The
+planned vocabulary includes `open`, `close`, `stop`, and `toggle`, but the
+`controls:` option is deliberately rejected by the current schema. This keeps
+ESPHome from accepting a configuration that cannot work yet.
 
-```yaml
-controls:
-  - input: open_button
-    target: garage_door
-    intent: open
-
-  - input: close_button
-    target: garage_door
-    intent: close
-
-  - input: stop_button
-    target: garage_door
-    intent: stop
-```
-
-Use an intent that is valid for the target domain. See
-[Domains and Capabilities](domains.md) for the common mappings.
+When this milestone is implemented, the guide will include tested copy-paste
+examples and the target will match the ESPHome ID registered on the leader.
 
 ## Multiple Entities in One Domain
 
@@ -216,7 +176,9 @@ synchrocast:
       - irrigation_valve
 ```
 
-Each block owns its role, group, key, and entity lists.
+Each block owns its role, group, key, and entity lists. At most eight
+`synchrocast:` blocks are allowed on one device so attached consumer
+registration remains bounded.
 
 ## Transport Options
 
@@ -231,32 +193,73 @@ synchrocast:
   transport: auto
 ```
 
-`auto` uses ESP-NOW on ESP32 and UDP fallback where needed. Advanced users can
-request `espnow` or `udp` explicitly when diagnosing a transport problem.
+The current skeleton records this request for transport arbitration. If
+`cfx_sync` is configured on the same device, `auto` accepts whichever CFX
+transport is active. The standalone ESP-NOW/UDP backend is not implemented yet,
+so a Synchrocast-only device does not exchange network packets at this stage.
+
+Advanced users can request `espnow` or `udp` explicitly to verify that an
+attached CFX owner provides that transport. Most users should keep `auto`.
+
+## Using ChimeraFX and Synchrocast Together
+
+Add both repositories normally and configure both `cfx_sync:` and
+`synchrocast:`. Repository order does not matter.
+
+```yaml
+external_components:
+  - source: github://effelle/Synchrocast@stage
+    refresh: always
+  - source: github://effelle/ChimeraFX@stage
+    refresh: always
+
+# ChimeraFX lights and Magic Buttons use this specialized profile.
+cfx_sync:
+  role: follower
+  group: living_room_lights
+  key: !secret cfx_sync_key
+  lights:
+    - room_light
+
+# The fan uses the general Synchrocast domain handler.
+synchrocast:
+  id: room_fan_sync
+  role: follower
+  group: living_room_fan
+  key: !secret synchrocast_key
+  fans:
+    - room_fan
+```
+
+When `cfx_sync:` is configured, it remains the sole ESP-NOW/UDP owner.
+Synchrocast attaches automatically and does not start another socket, change the
+radio channel, restart ESP-NOW, or manage a competing peer table.
+
+- Keep `transport: auto` unless you are diagnosing a problem.
+- An explicit Synchrocast transport must already be active in `cfx_sync`.
+- Attached UDP inherits CFX port `39580`.
+- Do not configure another attached UDP port.
+- Merely adding the ChimeraFX repository does not activate sharing;
+  `cfx_sync:` must be present in the device configuration.
+
+The full beginner-oriented walkthrough is in
+[Using Synchrocast with ChimeraFX](chimerafx.md).
 
 ## All Options
 
-| Option | Required | Planned default | Meaning |
+| Option | Required | Default | Meaning |
 | --- | --- | --- | --- |
 | `id` | Recommended | Generated | Readable ID for this Synchrocast block. |
 | `role` | Yes | - | `leader`, `follower`, `controller`, or `satellite`. |
 | `group` | Yes | - | Devices with the same group communicate together. |
-| `key` | Yes | - | Shared private passphrase. Minimum eight characters. |
-| `lights` | No | Empty | Local Light IDs. |
-| `covers` | No | Empty | Local Cover IDs. |
-| `fans` | No | Empty | Local Fan IDs. |
-| `climates` | No | Empty | Local Climate IDs. |
-| `locks` | No | Empty | Local Lock IDs. |
-| `media_players` | No | Empty | Local Media Player IDs. |
-| `valves` | No | Empty | Local Valve IDs. |
-| `switches` | No | Empty | Local Switch IDs. |
-| `sensors` | No | Empty | Local numeric Sensor IDs. |
-| `binary_sensors` | No | Empty | Local Binary Sensor IDs. |
-| `controls` | Controller or satellite | Empty | Local input, remote target, and intent mappings. |
-| `heartbeat` | No | `30s` | Regular leader state refresh interval. |
+| `key` | Yes | - | Passphrase reserved for the upcoming authenticated codec. Validated now; not used for live packets yet. Minimum eight characters. |
+| `covers` | No | Empty | Local Cover IDs. Implemented. |
+| `fans` | No | Empty | Local Fan IDs. Implemented. |
+| `valves` | No | Empty | Local Valve IDs. Implemented. |
+| `heartbeat` | No | `30s` | Reserved leader refresh interval. Stored and reported now; no heartbeat packet is emitted yet. |
 | `transport` | No | `auto` | `auto`, `espnow`, or `udp`. |
-| `udp_port` | No | `45678` | UDP fallback port. |
-| `fallback_channel` | No | `6` | ESP-NOW offline fallback channel. |
+| `udp_port` | No | Attached `39580` | Optional validation of the UDP port inherited from CFX. Rejected for standalone mode until that backend exists. |
 
-The defaults in this table follow the inherited transport design and remain
-subject to validation when the Step 3 schema is implemented.
+Light, Climate, Lock, Media Player, Switch, Sensor, Binary Sensor, and control
+mapping options remain planned and are currently rejected instead of being
+silently ignored.

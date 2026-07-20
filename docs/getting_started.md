@@ -1,11 +1,12 @@
 # Getting Started
 
-This guide shows the shortest path to a first Synchrocast test: one leader, one
-follower, and one cover shared between them.
+This guide shows the shortest configuration path: one leader, one follower, and
+one cover shared between them.
 
-> **Before you start:** the examples define the planned Step 3 YAML interface.
-> The current skeleton does not contain that YAML layer yet. Keep these examples
-> as the public configuration contract while development continues.
+> **Before you start:** these Cover examples now validate and generate the
+> application layer. Live network synchronization still requires the upcoming
+> authenticated Synchrocast wire codec. Use this guide for configuration and
+> simulation preparation, not for a finished installation yet.
 
 ## What You Need
 
@@ -15,8 +16,9 @@ follower, and one cover shared between them.
 - One local ESPHome entity on each device that represents the same logical
   entity. The first example uses a cover.
 
-ESP32 is the preferred target for the lowest-latency ESP-NOW transport. ESP8266
-uses the UDP fallback.
+ESP32 is the preferred target for the lowest-latency ESP-NOW transport. The
+standalone ESP-NOW/UDP backend remains in development. When `cfx_sync` is also
+configured, Synchrocast automatically borrows its active transport.
 
 ## Step 1: Add the Repository
 
@@ -49,7 +51,9 @@ synchrocast_key: "replace-this-with-your-own-long-passphrase"
 ```
 
 Use the same key on every device in the group. Choose a private passphrase with
-at least eight characters. You do not need to generate a hexadecimal key.
+at least eight characters. You do not need to generate a hexadecimal key. The
+current skeleton validates this value but does not authenticate live traffic
+until the wire-codec milestone is implemented.
 
 ## Step 3: Choose the Leader
 
@@ -113,19 +117,29 @@ During early testing, add this logger configuration to both devices:
 logger:
   level: VERBOSE
   logs:
+    synchrocast: VERBOSE
     synchrocast.dispatcher: VERBOSE
     synchrocast.cover: VERBOSE
 ```
 
-The dispatcher log shows the packet type, domain, entity identity, intent,
-payload size, and remaining queue depth. The cover log confirms the action that
-was applied.
+The main Synchrocast tag shows transport ownership and state. During later
+packet simulations, the dispatcher log shows the packet type, domain, entity
+identity, intent, payload size, and remaining queue depth. The cover log
+confirms the action that was applied.
 
 Remove the verbose level after testing. Normal operation is intentionally quiet.
 
-## What Should Happen
+## What You Can Verify Now
 
-After both devices start:
+With the current skeleton, ESPHome can validate and generate both YAML files.
+At startup, the log should show the role, group hash, registered Cover handler,
+and transport state. A Synchrocast-only device reports
+`standalone backend pending`; that state means Synchrocast owns the future
+transport slot, not that a network backend is already running.
+
+The two devices do **not** exchange live Synchrocast state yet. The authenticated
+wire codec and standalone network backend are the next transport milestone.
+Once that milestone is complete, this example is designed to provide:
 
 - opening the leader opens the follower;
 - closing the leader closes the follower;

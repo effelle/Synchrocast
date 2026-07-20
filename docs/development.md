@@ -5,7 +5,12 @@ can begin with [Getting Started](getting_started.md).
 
 ## Boundary
 
-Synchrocast is standalone. It does not depend on ChimeraFX or `cfx_sync`.
+Synchrocast is the canonical synchronization component. It reserves standalone
+ownership when ChimeraFX is absent; the standalone network backend is still a
+future milestone. When a configured `cfx_sync` integration is detected,
+Synchrocast conditionally compiles a narrow compatibility adapter and borrows
+the already-running CFX transport. ChimeraFX remains optional and is never
+auto-loaded by Synchrocast.
 
 ESPHome `2026.7.0` is the current compatibility baseline. Checks against older
 versions can be useful, but they do not replace the 2026.7 build.
@@ -25,6 +30,42 @@ transport task
 
 Transport code must call `enqueue_packet()` from task context. It must not call a
 domain handler or ESPHome entity directly.
+
+## Transport Ownership and CFX Coexistence
+
+There is exactly one transport owner on a device:
+
+| Configuration | Owner | Synchrocast state |
+| --- | --- | --- |
+| No `cfx_sync:` block | Synchrocast | `standalone backend pending` until its backend is implemented |
+| Active `cfx_sync:` block | `cfx_sync` | `attached to cfx_sync` |
+| CFX selected but unavailable or incompatible | None | `waiting` or `blocked`; never automatic fallback |
+
+ESPHome code generation detects the configured integration rather than the
+presence of files in an external repository. In attached mode Synchrocast:
+
+- registers one detachable raw consumer with the CFX bus;
+- receives only frames that do not carry the `CFXS` signature;
+- inherits active ESP-NOW/UDP availability and UDP port `39580`;
+- can queue fixed-buffer broadcast or unicast sends through the active CFX
+  transport without owning it;
+- never starts, stops, or rearms the shared radio;
+- never opens a second UDP socket;
+- preserves the unknown-peer receive path so the future authenticated codec can
+  recognize and suppress a packet if ESPHome offers it again after discovery.
+
+Malformed or unsupported `CFXS` frames remain owned by ChimeraFX and are not
+offered to Synchrocast. Likewise, the future Synchrocast wire codec must claim a
+frame only after checking its distinct signature and authentication tag.
+
+The compatibility hook is a transport boundary, not a wire decoder. Until the
+authenticated Synchrocast codec is implemented, raw shared frames remain
+unclaimed and cannot enter the application dispatcher.
+
+The shared frame MTU is 250 bytes. CFX drops larger UDP datagrams instead of
+offering a truncated packet, and raw send methods reject null, empty, or
+oversized buffers. CFX stores at most eight shared-consumer pointers;
+Synchrocast applies the same eight-instance configuration limit.
 
 ## Good Citizen Rules
 

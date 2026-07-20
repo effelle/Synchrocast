@@ -5,8 +5,6 @@
 
 #include "synchrocast_types.h"
 
-#include "esphome/core/component.h"
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -32,7 +30,7 @@ struct SynchrocastDispatcherStats {
   uint32_t no_handler{0};
 };
 
-class SynchrocastDispatcher final : public Component {
+class SynchrocastDispatcher final {
  public:
   static constexpr uint8_t QUEUE_CAPACITY = 16;
   static constexpr uint8_t MAX_PACKETS_PER_LOOP = 4;
@@ -44,8 +42,8 @@ class SynchrocastDispatcher final : public Component {
   // copies into fixed storage; ESPHome entities are touched later in loop().
   SynchrocastEnqueueResult enqueue_packet(const SynchrocastPacket &packet);
 
-  void loop() override;
-  void dump_config() override;
+  void loop();
+  void dump_config();
 
   uint8_t queue_depth();
   SynchrocastDispatcherStats get_stats();

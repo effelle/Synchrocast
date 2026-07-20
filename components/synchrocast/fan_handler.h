@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include "esphome/core/defines.h"
+
+#ifdef USE_SYNCHROCAST_FAN
+
 #include "synchrocast_entity_registry.h"
 #include "synchrocast_types.h"
 
@@ -34,3 +38,5 @@ class FanHandler final : public SynchrocastDomainHandler {
 
 }  // namespace synchrocast
 }  // namespace esphome
+
+#endif  // USE_SYNCHROCAST_FAN

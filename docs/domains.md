@@ -9,7 +9,7 @@ receiving entity applies only actions and state that make sense for its domain.
 | --- | --- | --- | --- |
 | Light | `lights` | On, off, toggle, brightness, color, color temperature, effects | Planned |
 | Cover | `covers` | Open, close, stop, toggle, position | Handler implemented |
-| Fan | `fans` | On, off, toggle, speed, modes | Handler implemented |
+| Fan | `fans` | On, off, toggle, speed | Handler implemented |
 | Climate | `climates` | Target temperature, HVAC mode, climate state | Planned |
 | Lock | `locks` | Lock, unlock, lock state | Planned |
 | Media Player | `media_players` | Play, pause, volume, playback state | Planned |
@@ -137,8 +137,8 @@ Sensors report state and do not accept actuator commands.
 - Sensor publishes a numeric value.
 - Binary Sensor publishes an on/off value.
 
-Step 2 will receive those broadcasts and publish them through local ESPHome
-template entities on the destination device.
+The sensor-handler milestone will receive those broadcasts and publish them
+through local ESPHome template entities on the destination device.
 
 ## One Device with Several Domains
 
@@ -154,13 +154,11 @@ synchrocast:
     - ventilation_fan
   valves:
     - water_valve
-  switches:
-    - circulation_pump
-  sensors:
-    - room_temperature
-  binary_sensors:
-    - leak_detected
 ```
 
 Only configured domains should create handlers and reserve their entity tables.
 This keeps small devices from paying the memory cost of unused domains.
+
+Switch, Sensor, and Binary Sensor will be addable to the same block after their
+handlers and schema options are implemented. They are omitted above so the
+example remains valid with the current `stage` branch.

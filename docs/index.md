@@ -1,9 +1,9 @@
 # Synchrocast Documentation
 
-Synchrocast keeps ESPHome entities on different devices synchronized with very
-little delay. A main device can publish state, another device can follow it, and
-a wall controller can send commands without needing the target hardware on the
-same board.
+Synchrocast is being built to keep ESPHome entities on different devices
+synchronized with very little delay. The target design lets a main device
+publish state, another device follow it, and a wall controller send commands
+without needing the target hardware on the same board.
 
 ## Start Here
 
@@ -15,6 +15,8 @@ same board.
    can synchronize.
 4. Enable the focused logs in
    [Troubleshooting and Verbose Logs](troubleshooting.md) when testing devices.
+5. If ChimeraFX is on the same device, follow
+   [Using Synchrocast with ChimeraFX](chimerafx.md).
 
 Developers and contributors can read
 [Architecture and Resource Budget](development.md) for the fixed-memory design
@@ -22,25 +24,27 @@ and simulation boundary.
 
 ## A Simple Mental Model
 
-Think of a Synchrocast group as one room or one system. Every device in the group
-uses the same group name and private key.
+Think of a Synchrocast group as one room or one system. In the finished wire
+protocol, every device in the group will use the same group name and private
+key.
 
 | Role | What it does |
 | --- | --- |
 | `leader` | Holds the main state for the group. |
 | `follower` | Copies the leader. |
-| `controller` | Sends user actions but has no local synchronized entity. |
-| `satellite` | Follows the leader and can also report local state or controls. |
+| `controller` | Will send user actions but has no local synchronized entity. |
+| `satellite` | Will follow the leader and report local state or controls. |
 
-Most users should begin with one leader and one follower. Add controllers,
-satellites, additional entities, or more groups only after that first pair works.
+For configuration and simulation work, begin with one leader and one follower.
+Controller mappings and live cross-device exchange are not implemented yet.
 
 ## Project Status
 
 Synchrocast is still under development. Cover, Fan, and Valve application
-handlers and the fixed-memory dispatcher are implemented. The YAML examples in
-these guides define the intended public configuration for Step 3 and do not yet
-validate in the current skeleton.
+handlers, the fixed-memory dispatcher, their initial YAML registration, and
+automatic `cfx_sync` transport arbitration are implemented. The authenticated
+wire codec, standalone transport backend, and remaining domains are still in
+development.
 
 The planned public domain scope is:
 

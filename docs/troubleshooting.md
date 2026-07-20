@@ -11,6 +11,7 @@ Add the tags for the domains you are testing:
 logger:
   level: VERBOSE
   logs:
+    synchrocast: VERBOSE
     synchrocast.dispatcher: VERBOSE
     synchrocast.cover: VERBOSE
     synchrocast.fan: VERBOSE
@@ -108,25 +109,51 @@ queue-full warnings need investigation:
   `github://effelle/Synchrocast@stage`.
 - Remove an incomplete `components:` allow-list.
 - Confirm the device can reach GitHub during preparation.
-- The public YAML layer is scheduled for Step 3 and does not exist in the current
-  skeleton yet.
+
+### `Transport state=attached to cfx_sync`
+
+This is the expected result when the same YAML contains a `cfx_sync:` block.
+CFX owns the radio/socket and Synchrocast has attached without creating another
+transport.
+
+### `Transport state=standalone backend pending`
+
+Synchrocast owns the transport slot because no `cfx_sync:` block was found.
+In the current skeleton, the standalone ESP-NOW/UDP backend is still under
+development, so this state does not yet mean that network packets are flowing.
+
+### `Transport state=waiting for cfx_sync`
+
+Synchrocast detected `cfx_sync`, so it will not start a second transport. Check
+the earlier CFX logs for an ESP-NOW or UDP startup error. There is intentionally
+no silent fallback.
+
+### Transport arbitration is blocked
+
+The requested Synchrocast transport is not provided by the active CFX bus, or
+an explicit UDP port conflicts with inherited port `39580`. Use
+`transport: auto`, remove the Synchrocast `udp_port`, and correct the CFX startup
+error before retrying.
 
 ### The follower does not react
 
-- Confirm sender and receiver use the same `group`.
-- Confirm they use the same `key`.
-- Confirm matching entities use the same YAML `id`.
-- Confirm there is only one leader in the group.
-- Confirm the receiver is a follower or satellite.
-- For ESP-NOW, confirm both devices use the same Wi-Fi channel.
-- For UDP, confirm both devices are on the same reachable network.
+Live cross-device state is not implemented in the current skeleton, so this is
+expected outside an application-layer simulation. If you are injecting decoded
+test packets, confirm the group, matching entity ID, domain, packet type, and
+intent shown in the verbose dispatcher log.
 
 ### A controller does nothing
 
-- Confirm the device uses `role: controller` or `role: satellite`.
-- Confirm `input` points to an existing local binary sensor.
-- Confirm `target` matches the leader entity ID exactly.
-- Confirm `intent` is valid for the target domain.
+The `controller` role is accepted for topology preparation, but the
+`controls:` mapping is not implemented yet. The current schema rejects that
+option instead of pretending the input is active.
+
+### `Shared frame left unclaimed`
+
+CFX delivered a non-CFX packet through its shared transport hook, but the
+authenticated Synchrocast wire codec is not installed yet. This verbose message
+is expected during bridge development and does not mean that CFX lost one of
+its own packets.
 
 ## Capturing a Useful Simulation Log
 
