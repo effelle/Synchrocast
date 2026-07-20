@@ -1,268 +1,186 @@
-# Synchronizing Sensor Values
+# Sharing Sensors
 
-This guide explains how to copy numeric, on/off, and text information from one
-ESPHome device to another. It is written for users who are comfortable editing
-an ESPHome YAML file, but it does not assume programming knowledge.
+Synchrocast treats sensors as immutable, leader-owned values:
 
-Synchrocast creates a normal ESPHome entity on the receiving device. You do not
-need to create a template sensor just to decode the network value. The received
-entity can appear in Home Assistant, be displayed on the device, or be used in
-ESPHome automations exactly like a locally measured entity.
+- the leader reads and broadcasts the value;
+- followers and satellites may read it;
+- readers cannot change or reshare it;
+- there are no `publish`, `receive`, timing, delta, or stale options.
 
-## What Is Sent
+Numeric Sensors, Binary Sensors, and Text Sensors all follow this model.
 
-Synchrocast keeps the three value types separate:
+## The Share Key
 
-| ESPHome type | Network value | Typical examples |
-| --- | --- | --- |
-| Sensor | One 32-bit number | Voltage, temperature, power, energy total |
-| Binary Sensor | `ON`, `OFF`, or unavailable | Door, motion, pump running |
-| Text Sensor | UTF-8 text up to 64 bytes, or unavailable | Operating mode, status message |
-
-A numeric value stays numeric. A value such as `125.699997` is the same
-single-precision number that ESPHome already uses for sensors. If the receiver
-has `accuracy_decimals: 1`, ESPHome displays it as `125.7`; Synchrocast does not
-turn it into text or round it on the network.
-
-## The Three Names in an Example
-
-The following names have different jobs:
-
-- `source:` is the existing ESPHome entity on the publishing device.
-- `sync_id:` is the permanent network name shared by publisher and receiver.
-- `id:` under `receive:` is the new local ESPHome entity on the receiving
-  device.
-
-Only `sync_id` must match across devices. Local ESPHome IDs and visible names
-may be different.
-
-Choose a descriptive `sync_id` once and keep it stable, for example
-`grid.phase_2.voltage`. It may contain lowercase letters, numbers, dots,
-underscores, and hyphens. It cannot contain spaces or uppercase letters.
-
-## Before Configuring a Sensor
-
-Add the Synchrocast repository to every participating device:
+A share key is a short identifier chosen by you. It is not an ESPHome domain,
+device class, unit, or predefined Synchrocast category.
 
 ```yaml
-external_components:
-  - source: github://effelle/Synchrocast@stage
-    refresh: always
+sensors:
+  meter_phase_2: phase_2_voltage
 ```
 
-That is sufficient for normal Synchrocast operation. On ESP32, `transport:
-auto` uses Synchrocast's ESP-NOW transport. On ESP8266 it uses Synchrocast UDP.
+In this mapping:
 
-Only add ChimeraFX when the device also needs its specialized light or Magic
-Button synchronization:
+- `meter_phase_2` is the stable share key used by Synchrocast;
+- `phase_2_voltage` is the existing local ESPHome sensor on the leader.
 
-```yaml
-external_components:
-  - source: github://effelle/Synchrocast@stage
-    refresh: always
-  - source: github://effelle/ChimeraFX@stage
-    refresh: always
-```
+The local ESPHome ID may change later without changing the share key. Update
+only the right side of the mapping when that happens.
 
-See [Using Synchrocast with ChimeraFX](chimerafx.md) for that optional shared
-transport setup.
+Share keys contain 1-64 lowercase letters, numbers, or underscores. They must
+begin with a letter or underscore. A reader uses each share key as the local
+ESPHome ID, so keys read by one device must be unique.
 
-Store the Synchrocast key in `secrets.yaml`:
+## Leader Example
 
-```yaml
-synchrocast_key: "replace-this-with-a-private-long-passphrase"
-```
-
-Every Synchrocast node in the same group must use the same `group` and key.
-The key authenticates packets and protects them from undetected modification;
-it does not encrypt sensor values. Do not broadcast private information over an
-untrusted network.
-
-## Complete Numeric Sensor Example
-
-### Publishing device
-
-Assume this device already has a real voltage sensor with the ID
-`phase_2_voltage`:
+Assume the leader already defines this sensor:
 
 ```yaml
 sensor:
-  - platform: adc
-    pin: GPIO34
+  - platform: template
     id: phase_2_voltage
     name: "Phase 2 Voltage"
     unit_of_measurement: V
-    device_class: voltage
-    state_class: measurement
-    accuracy_decimals: 1
-    filters:
-      - multiply: 130.0
-
-synchrocast:
-  role: leader
-  group: power_grid
-  key: !secret synchrocast_key
-
-  sensors:
-    publish:
-      - source: phase_2_voltage
-        sync_id: grid.phase_2.voltage
-        min_interval: 1s
-        refresh_interval: 30s
-        delta: 0.1
+    update_interval: 10s
+    lambda: return 125.7f;
 ```
 
-Synchrocast reads the final value after the source sensor's filters. In this
-example the multiplied voltage is sent, not the raw ADC reading.
-
-### Receiving device
-
-The receiving node does not need an ADC sensor or a template sensor:
-
-```yaml
-synchrocast:
-  role: follower
-  group: power_grid
-  key: !secret synchrocast_key
-
-  sensors:
-    receive:
-      - sync_id: grid.phase_2.voltage
-        id: remote_phase_2_voltage
-        name: "Phase 2 Voltage"
-        unit_of_measurement: V
-        device_class: voltage
-        state_class: measurement
-        accuracy_decimals: 1
-        stale_after: 2min
-```
-
-This creates `remote_phase_2_voltage` as an ordinary local ESPHome sensor. Its
-unit, device class, state class, icon, accuracy, filters, and automations are
-configured locally because those choices describe how this receiving device
-will use and display the value.
-
-For example, an automation can be attached directly to the received entity:
-
-```yaml
-synchrocast:
-  role: follower
-  group: power_grid
-  key: !secret synchrocast_key
-
-  sensors:
-    receive:
-      - sync_id: grid.phase_2.voltage
-        id: remote_phase_2_voltage
-        name: "Phase 2 Voltage"
-        unit_of_measurement: V
-        accuracy_decimals: 1
-        stale_after: 2min
-        on_value_range:
-          - below: 105
-            then:
-              - logger.log: "Phase 2 voltage is low"
-```
-
-In another ESPHome lambda, test `id(remote_phase_2_voltage).has_state()` before
-using `id(remote_phase_2_voltage).state`. This avoids treating an unavailable
-network value as a real measurement.
-
-## Power and Energy Totals
-
-Power and energy are different quantities:
-
-- Power is an instantaneous measurement, normally expressed in watts.
-- Energy is an accumulated total, normally expressed in watt-hours or
-  kilowatt-hours.
-
-If the publishing device already calculates a cumulative energy total, send
-that absolute total. Do not send only the change since the previous packet.
-Absolute totals survive a lost packet: the next successful update contains the
-complete current total.
-
-Publisher:
+The Synchrocast block shares it as `meter_phase_2`:
 
 ```yaml
 synchrocast:
   role: leader
   group: power_grid
   key: !secret synchrocast_key
+
   sensors:
-    publish:
-      - source: total_energy
-        sync_id: grid.total.energy
-        min_interval: 5s
-        refresh_interval: 60s
-        delta: 0.001
+    meter_phase_2: phase_2_voltage
 ```
 
-Receiver:
+The source sensor remains responsible for its own update interval and filters.
+Synchrocast observes the final state produced by that sensor. Synchrocast does
+not add a second user-configurable timer or delta filter.
+
+## Two Followers
+
+Both followers use the same share key:
 
 ```yaml
 synchrocast:
   role: follower
   group: power_grid
   key: !secret synchrocast_key
-  sensors:
-    receive:
-      - sync_id: grid.total.energy
-        id: remote_total_energy
-        name: "Grid Total Energy"
-        unit_of_measurement: kWh
-        device_class: energy
-        state_class: total_increasing
-        accuracy_decimals: 3
-        stale_after: 3min
+
+  sensors: meter_phase_2
 ```
 
-If you only have a power reading and need to calculate energy, perform the
-integration on the publishing device. Integrating again on the receiver can
-undercount energy when packets are delayed or lost.
+Repeat that block on the second follower. Synchrocast creates a read-only
+numeric sensor named `Meter Phase 2` on each device. No Template Sensor is
+needed. The share key is also the local ESPHome ID, so device-side automations
+can read it directly as `id(meter_phase_2).state`.
 
-## Binary Sensor Example
+For several values, use a list:
 
-Publisher:
+```yaml
+sensors:
+  - meter_phase_1
+  - meter_phase_2
+  - meter_phase_3
+```
+
+## Use the Received Value on the Device
+
+The share key is a real ESPHome ID. For example, this follower checks the
+received voltage every 30 seconds and turns on an existing switch named
+`voltage_alarm` when the value is above 130:
+
+```yaml
+interval:
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            sensor.in_range:
+              id: meter_phase_2
+              above: 130
+          then:
+            - switch.turn_on: voltage_alarm
+          else:
+            - switch.turn_off: voltage_alarm
+```
+
+Home Assistant also sees `Meter Phase 2` as a normal read-only sensor. A
+Template Sensor is not required in either case.
+
+The current stage protocol copies the value and availability, not presentation
+metadata such as the leader's display name, unit, device class, or state class.
+The reader remains fully usable by its share-key ID for device-side calculations.
+
+## Satellites Choose Too
+
+A satellite receives only the sensor share keys it lists. A satellite that
+only mirrors a cover does not need a `sensors:` entry:
 
 ```yaml
 synchrocast:
   role: satellite
+  group: power_grid
+  key: !secret synchrocast_key
+  covers: living_room_cover
+```
+
+If it also needs the voltage, add one line:
+
+```yaml
+synchrocast:
+  role: satellite
+  group: power_grid
+  key: !secret synchrocast_key
+  sensors: meter_phase_2
+  covers: living_room_cover
+```
+
+Satellites are still read-only for sensor domains. Only a leader may map a
+share key to a local sensor source.
+
+## Broadcast Filtering
+
+The leader sends one authenticated broadcast for each shared state, regardless
+of how many devices use it. There are no unicast subscriptions or peer lists.
+
+Every reader checks the domain and hashed share key. If the share key is not
+listed locally, the packet is discarded before entering the dispatch queue.
+This keeps processing and logs quiet while preserving one-to-many broadcast.
+
+The reader list therefore controls local interest; it does not change the
+leader's sensor timing.
+
+## Binary Sensors
+
+Leader:
+
+```yaml
+synchrocast:
+  role: leader
   group: pump_room
   key: !secret synchrocast_key
   binary_sensors:
-    publish:
-      - source: local_pump_running
-        sync_id: pump.running
-        min_interval: 100ms
-        refresh_interval: 30s
+    pump_running: local_pump_running
 ```
 
-Receiver:
+Follower or satellite:
 
 ```yaml
 synchrocast:
   role: follower
   group: pump_room
   key: !secret synchrocast_key
-  binary_sensors:
-    receive:
-      - sync_id: pump.running
-        id: remote_pump_running
-        name: "Pump Running"
-        device_class: running
-        stale_after: 2min
-        on_press:
-          then:
-            - logger.log: "The remote pump started"
+  binary_sensors: pump_running
 ```
 
-Binary Sensor is for observed `ON`/`OFF` state. A momentary user command, such
-as “toggle the fan,” belongs to a controller intent rather than a synchronized
-binary state.
+## Text Sensors
 
-## Text Sensor Example
-
-Publisher:
+Leader:
 
 ```yaml
 synchrocast:
@@ -270,93 +188,60 @@ synchrocast:
   group: inverter
   key: !secret synchrocast_key
   text_sensors:
-    publish:
-      - source: inverter_status
-        sync_id: inverter.status
-        min_interval: 1s
-        refresh_interval: 60s
+    inverter_status: local_inverter_status
 ```
 
-Receiver:
+Follower or satellite:
 
 ```yaml
 synchrocast:
   role: follower
   group: inverter
   key: !secret synchrocast_key
-  text_sensors:
-    receive:
-      - sync_id: inverter.status
-        id: remote_inverter_status
-        name: "Inverter Status"
-        icon: mdi:transmission-tower
-        stale_after: 3min
-        on_value:
-          then:
-            - logger.log:
-                format: "Remote inverter says: %s"
-                args: [x.c_str()]
+  text_sensors: inverter_status
 ```
 
-Text must be valid UTF-8 and at most 64 bytes. Bytes are not the same as visible
-characters: accented letters and many symbols use more than one byte. If a
-source exceeds the limit, Synchrocast logs one warning, sends unavailable, and
-does not silently cut the message. Text is not split across multiple packets.
+Text must be valid UTF-8 and no longer than 64 bytes. Oversized or invalid text
+is rejected rather than silently truncated.
 
-## Traffic and Freshness Options
+## Availability and Recovery
 
-| Option | Where | Default | Purpose |
-| --- | --- | --- | --- |
-| `min_interval` | `publish` | Numeric `250ms`, binary `50ms`, text `1s` | Fastest allowed transmission rate; newer values replace older pending values. |
-| `delta` | Numeric `publish` | `0` | Minimum numeric change that triggers an immediate packet. |
-| `refresh_interval` | `publish` | `60s` | Repeats the latest absolute state so a late or recovering receiver catches up. |
-| `stale_after` | `receive` | `3min` | Marks the local entity unavailable if no refresh arrives. |
+Synchrocast broadcasts unavailable when the leader's source has no valid state.
+Readers also mark the local entity unavailable when the leader stops
+refreshing it. These recovery intervals are internal protocol behavior and are
+not YAML settings.
 
-`delta: 0` means every different numeric state can trigger an update, still
-limited by `min_interval`. A nonzero delta reduces traffic for noisy sensors.
-The latest value is always used for the periodic refresh, even when small
-changes did not trigger immediate packets.
-
-Choose `stale_after` comfortably above `refresh_interval`. Two or three refresh
-periods is a practical starting point.
-
-## Availability and Restart Behavior
-
-Unavailable is a real state, not the number zero, the word `unknown`, or an
-empty substitute:
-
-- A numeric receiver reports no state instead of publishing `0`.
-- A binary receiver is invalidated instead of assuming `OFF`.
-- A text receiver reports no state; an empty string remains a valid text value.
-
-Each publisher repeats its current state periodically. A receiver that starts
-late therefore becomes usable without a manual request. If the publishing node
-restarts, its new authenticated boot identity is accepted. Duplicate copies of
-the same packet received over both ESP-NOW and UDP are discarded.
-
-## One Authoritative Publisher
-
-Configure only one publisher for each combination of `group`, domain, and
-`sync_id`. A receiver locks that value to the first active authenticated
-publisher. Packets from a competing publisher are ignored and reported with a
-rate-limited warning. After the active publisher becomes stale, a new publisher
-can take ownership.
-
-A Synchrocast-created receiver cannot also be configured as a publisher on the
-same device. YAML validation rejects that echo loop.
+A numeric sensor transports its absolute 32-bit floating-point value. Energy
+totals should therefore be shared as the complete accumulated total, not as the
+change since the previous packet. A later successful packet then repairs any
+missed update automatically.
 
 ## Common Mistakes
 
-- Publisher and receiver use different `sync_id` values.
-- The same `sync_id` is published by two devices.
-- A follower is configured to publish; use `role: satellite` for a node that
-  both owns local state and participates in synchronization.
-- Receiver metadata uses the wrong unit or state class. Metadata is local and
-  is not copied over the network.
-- `stale_after` is shorter than the publisher's `refresh_interval`.
-- A text state is longer than 64 UTF-8 bytes.
-- An ESP32 and ESP8266 are mixed in one group while both use `transport: auto`;
-  choose `transport: udp` on every member of that mixed-platform group.
+### Reversing the leader mapping
 
-Use the focused logs in [Troubleshooting and Verbose Logs](troubleshooting.md)
-when checking any of these cases.
+The mapping is always:
+
+```yaml
+# share_key: local_esphome_id
+sensors:
+  meter_phase_2: phase_2_voltage
+```
+
+### Giving a follower the local leader ID
+
+Followers list the share key, not the leader's ESPHome ID:
+
+```yaml
+sensors: meter_phase_2
+```
+
+### Expecting an unlisted sensor
+
+A follower or satellite with no matching entry deliberately ignores that
+sensor's broadcasts.
+
+### Using different group names or keys
+
+All participating devices must use the same `group` and `key`. The share key
+only identifies the sensor inside that authenticated group.

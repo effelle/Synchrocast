@@ -10,7 +10,7 @@ normal logging, and detailed diagnostics only when verbose logging is enabled.
 
 > **Development status:** Synchrocast is still a `stage` project. Its
 > authenticated application protocol, fixed-memory dispatcher, Cover/Fan/Valve
-> receivers, native Sensor/Binary Sensor/Text Sensor publisher and receiver
+> handlers, native Sensor/Binary Sensor/Text Sensor leader sources and read-only
 > entities, standalone ESP-NOW/UDP transport, and optional `cfx_sync` transport
 > arbitration are implemented. The remaining actuator domains are still in
 > development.
@@ -71,7 +71,7 @@ external_components:
 See [Using Synchrocast with ChimeraFX](docs/chimerafx.md) for a complete
 two-component example and an explanation of which component owns the network.
 
-## Smallest Sensor Mapping
+## Smallest Sensor Share
 
 On the device that owns an existing ESPHome sensor:
 
@@ -81,9 +81,7 @@ synchrocast:
   group: power_grid
   key: !secret synchrocast_key
   sensors:
-    publish:
-      - source: phase_2_voltage
-        sync_id: grid.phase_2.voltage
+    meter_phase_2: phase_2_voltage
 ```
 
 On the receiving device:
@@ -93,25 +91,22 @@ synchrocast:
   role: follower
   group: power_grid
   key: !secret synchrocast_key
-  sensors:
-    receive:
-      - sync_id: grid.phase_2.voltage
-        id: remote_phase_2_voltage
-        name: "Phase 2 Voltage"
-        unit_of_measurement: V
-        device_class: voltage
-        state_class: measurement
+  sensors: meter_phase_2
 ```
 
-Only `group`, key, and `sync_id` must match. Synchrocast creates the receiving
-sensor; no template is required. The [sensor guide](docs/sensors.md) explains
-filters, update limits, availability, binary values, text values, and energy
-totals.
+`meter_phase_2` is a custom share key, not a sensor type or device class. The
+leader maps it to its local `phase_2_voltage` sensor. Each follower that lists
+the share key gets a normal read-only ESPHome sensor; devices that omit it drop
+that broadcast before it reaches the packet queue. No template sensor is
+required. The share key is also its local ESPHome ID, so device automations can
+read `id(meter_phase_2).state` directly. See the
+[sensor guide](docs/sensors.md) for the complete model.
 
 ## Documentation
 
 - [Documentation home](docs/index.md)
 - [Getting started](docs/getting_started.md)
+- [Sensor and cover four-device example](docs/example_sensor_cover.md)
 - [Configuration reference](docs/configuration.md)
 - [Domains and capabilities](docs/domains.md)
 - [Synchronizing numeric, binary, and text sensors](docs/sensors.md)
@@ -132,8 +127,8 @@ The current application layer follows these rules:
   newer intent for that entity.
 - Domain handlers and entity registries use fixed storage and perform no
   packet-path heap allocation.
-- Sensor publishers retain only the latest coalesced state and use explicit
-  minimum and refresh intervals.
+- Sensor sources retain only the latest coalesced state and use a fixed internal
+  recovery refresh; there are no user-facing Synchrocast timing controls.
 - Duplicate packets and cross-transport copies are suppressed by authenticated
   boot/session sequence numbers.
 - Synchrocast owns ESP-NOW/UDP normally. If `cfx_sync` is configured,

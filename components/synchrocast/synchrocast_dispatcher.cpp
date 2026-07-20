@@ -88,6 +88,17 @@ SynchrocastEnqueueResult SynchrocastDispatcher::enqueue_packet(const Synchrocast
     return SynchrocastEnqueueResult::INVALID_PACKET;
   }
 
+  if (packet.msg_type == SynchrocastMessageType::STATE_BROADCAST) {
+    const size_t slot = static_cast<size_t>(packet.domain);
+    auto *handler =
+        slot < this->handlers_.size() ? this->handlers_[slot] : nullptr;
+    if (handler == nullptr ||
+        !handler->accepts_state_broadcast(packet.entity_hash)) {
+      this->stats_.filtered++;
+      return SynchrocastEnqueueResult::FILTERED;
+    }
+  }
+
   // Replace only the newest pending packet for the same entity, and only when
   // it is also a state packet. Encountering a newer intent stops coalescing so
   // per-entity command order remains intact.
@@ -192,10 +203,12 @@ void SynchrocastDispatcher::log_stats() {
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
   const auto stats = this->get_stats();
   ESP_LOGV(TAG,
-           "Stats received=%" PRIu32 " queued=%" PRIu32 " coalesced=%" PRIu32 " dropped=%" PRIu32
+           "Stats received=%" PRIu32 " queued=%" PRIu32 " coalesced=%" PRIu32 " filtered=%" PRIu32
+           " dropped=%" PRIu32
            " invalid=%" PRIu32 " dispatched=%" PRIu32 " heartbeat=%" PRIu32 " no_handler=%" PRIu32,
-           stats.received, stats.queued, stats.coalesced, stats.dropped, stats.invalid, stats.dispatched,
-           stats.heartbeats, stats.no_handler);
+           stats.received, stats.queued, stats.coalesced, stats.filtered,
+           stats.dropped, stats.invalid, stats.dispatched, stats.heartbeats,
+           stats.no_handler);
 #endif
 }
 

@@ -15,9 +15,9 @@ receiving entity applies only actions and state that make sense for its domain.
 | Media Player | `media_players` | Play, pause, volume, playback state | Planned |
 | Valve | `valves` | Open, close, stop, toggle, position | Handler implemented |
 | Switch | `switches` | On, off, toggle, switch state | Planned |
-| Sensor | `sensors` | Numeric publish and native receive entity | Implemented |
-| Binary Sensor | `binary_sensors` | On/off publish and native receive entity | Implemented |
-| Text Sensor | `text_sensors` | UTF-8 text publish and native receive entity | Implemented |
+| Sensor | `sensors` | Numeric leader source and native read-only entity | Implemented |
+| Binary Sensor | `binary_sensors` | On/off leader source and native read-only entity | Implemented |
+| Text Sensor | `text_sensors` | UTF-8 leader source and native read-only entity | Implemented |
 
 "Planned" means the domain belongs to the public Synchrocast scope but is not
 ready to configure in the current branch. Cover, Fan, and Valve currently have
@@ -141,30 +141,21 @@ Sensors report state and do not accept actuator commands.
 - Binary Sensor carries `ON`, `OFF`, or unavailable.
 - Text Sensor carries valid UTF-8 text up to 64 bytes, or unavailable.
 
-The publisher watches an existing ESPHome entity. The receiver is created by
-Synchrocast as a native ESPHome entity, so the destination does not need a
-template just to unpack a network value. Only the explicit `sync_id` must match
-between devices; units, names, display precision, filters, and automations are
-configured locally.
+The leader maps a custom share key to an existing ESPHome entity. Followers and
+satellites list only the share keys they want to read. Synchrocast creates the
+read-only receiving entity, so no template is needed just to unpack a network
+value.
 
 ```yaml
 synchrocast:
   role: follower
   group: utility_room
   key: !secret synchrocast_key
-  sensors:
-    receive:
-      - sync_id: utility.voltage
-        id: remote_voltage
-        name: "Remote Voltage"
-        unit_of_measurement: V
-        device_class: voltage
-        state_class: measurement
-        stale_after: 2min
+  sensors: utility_voltage
 ```
 
-See [Synchronizing Sensor Values](sensors.md) for complete numeric, binary, and
-text publisher/receiver examples.
+See [Sharing Sensors](sensors.md) for complete numeric, binary, and text
+examples.
 
 ## One Device with Several Domains
 
@@ -173,7 +164,7 @@ A device can participate in several domains at the same time:
 ```yaml
 synchrocast:
   id: utility_room_sync
-  role: satellite
+  role: leader
   group: utility_room
   key: !secret synchrocast_key
   fans:
@@ -181,14 +172,12 @@ synchrocast:
   valves:
     - water_valve
   sensors:
-    publish:
-      - source: room_temperature
-        sync_id: utility_room.temperature
+    utility_room_temperature: room_temperature
 ```
 
 Only configured domains should create handlers and reserve their entity tables.
 This keeps small devices from paying the memory cost of unused domains.
 
-An observational handler uses fixed-capacity publisher and receiver tables.
+An observational handler uses fixed-capacity leader and interest tables.
 Text Sensor support also enables the larger 64-byte application payload; builds
 without text sensors retain the smaller packet and dispatcher queue footprint.

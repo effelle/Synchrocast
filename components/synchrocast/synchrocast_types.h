@@ -110,6 +110,9 @@ class SynchrocastDomainHandler {
  public:
   virtual ~SynchrocastDomainHandler() = default;
   virtual SynchrocastDomain get_domain() const = 0;
+  virtual bool accepts_state_broadcast(uint32_t entity_hash) const {
+    return true;
+  }
   virtual void handle_intent(const SynchrocastPacket &packet) = 0;
   virtual void handle_state_broadcast(const SynchrocastPacket &packet) = 0;
   virtual void loop() {}

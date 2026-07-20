@@ -50,8 +50,7 @@ bool TextSensorHandler::hash_in_use_(uint32_t entity_hash) const {
 }
 
 bool TextSensorHandler::register_publisher(
-    uint32_t entity_hash, text_sensor::TextSensor *source,
-    uint32_t min_interval_ms, uint32_t refresh_interval_ms) {
+    uint32_t entity_hash, text_sensor::TextSensor *source) {
   if (source == nullptr || entity_hash == 0 ||
       this->publisher_count_ >= MAX_ENTITIES ||
       this->hash_in_use_(entity_hash)) {
@@ -62,20 +61,16 @@ bool TextSensorHandler::register_publisher(
   auto &publisher = this->publishers_[this->publisher_count_++];
   publisher.source = source;
   publisher.entity_hash = entity_hash;
-  publisher.min_interval_ms = min_interval_ms;
-  publisher.refresh_interval_ms = refresh_interval_ms;
   ESP_LOGV(TAG,
-           "Registered publisher '%s' hash=0x%08" PRIX32
-           " min=%" PRIu32 "ms refresh=%" PRIu32 "ms max_utf8=%u",
-           source->get_name().c_str(), entity_hash, min_interval_ms,
-           refresh_interval_ms,
+           "Registered publisher '%s' share=0x%08" PRIX32
+           " max_utf8=%u",
+           source->get_name().c_str(), entity_hash,
            static_cast<unsigned>(SYNCHROCAST_MAX_PAYLOAD_SIZE));
   return true;
 }
 
 bool TextSensorHandler::register_receiver(uint32_t entity_hash,
-                                          SynchrocastTextSensor *entity,
-                                          uint32_t stale_after_ms) {
+                                          SynchrocastTextSensor *entity) {
   if (entity == nullptr || entity_hash == 0 ||
       this->receiver_count_ >= MAX_ENTITIES ||
       this->hash_in_use_(entity_hash)) {
@@ -86,12 +81,19 @@ bool TextSensorHandler::register_receiver(uint32_t entity_hash,
   auto &receiver = this->receivers_[this->receiver_count_++];
   receiver.entity = entity;
   receiver.entity_hash = entity_hash;
-  receiver.stale_after_ms = stale_after_ms;
-  ESP_LOGV(TAG,
-           "Registered receiver '%s' hash=0x%08" PRIX32
-           " stale=%" PRIu32 "ms",
-           entity->get_name().c_str(), entity_hash, stale_after_ms);
+  ESP_LOGV(TAG, "Registered interest '%s' share=0x%08" PRIX32,
+           entity->get_name().c_str(), entity_hash);
   return true;
+}
+
+bool TextSensorHandler::accepts_state_broadcast(
+    uint32_t entity_hash) const {
+  for (uint8_t i = 0; i < this->receiver_count_; i++) {
+    if (this->receivers_[i].entity_hash == entity_hash) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void TextSensorHandler::handle_intent(const SynchrocastPacket &packet) {
@@ -200,13 +202,10 @@ void TextSensorHandler::observe_(Publisher &publisher) {
 void TextSensorHandler::maybe_send_(Publisher &publisher, uint32_t now) {
   const bool refresh_due =
       publisher.has_sent &&
-      now - publisher.last_sent_ms >= publisher.refresh_interval_ms;
-  if ((!publisher.pending && !refresh_due) ||
-      (publisher.last_attempt_ms != 0 &&
-       now - publisher.last_attempt_ms < publisher.min_interval_ms)) {
+      now - publisher.last_sent_ms >= STATE_REFRESH_INTERVAL_MS;
+  if (!publisher.pending && !refresh_due) {
     return;
   }
-  publisher.last_attempt_ms = now;
 
   SynchrocastPacket packet;
   packet.msg_type = SynchrocastMessageType::STATE_BROADCAST;
@@ -241,8 +240,8 @@ void TextSensorHandler::maybe_send_(Publisher &publisher, uint32_t now) {
 void TextSensorHandler::expire_receivers_(uint32_t now) {
   for (uint8_t i = 0; i < this->receiver_count_; i++) {
     auto &receiver = this->receivers_[i];
-    if (!receiver.seen ||
-        now - receiver.last_received_ms < receiver.stale_after_ms) {
+    if (!receiver.seen || now - receiver.last_received_ms <
+                              RECEIVER_STALE_AFTER_MS) {
       continue;
     }
     receiver.entity->mark_unavailable();

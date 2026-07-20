@@ -26,19 +26,19 @@ class SynchrocastBinarySensor final : public binary_sensor::BinarySensor {
 class BinarySensorHandler final : public SynchrocastDomainHandler {
  public:
   static constexpr size_t MAX_ENTITIES = 16;
+  static constexpr uint32_t STATE_REFRESH_INTERVAL_MS = 60000;
+  static constexpr uint32_t RECEIVER_STALE_AFTER_MS = 180000;
 
   void set_parent(SynchrocastComponent *parent) { this->parent_ = parent; }
   bool register_publisher(uint32_t entity_hash,
-                          binary_sensor::BinarySensor *source,
-                          uint32_t min_interval_ms,
-                          uint32_t refresh_interval_ms);
+                          binary_sensor::BinarySensor *source);
   bool register_receiver(uint32_t entity_hash,
-                         SynchrocastBinarySensor *entity,
-                         uint32_t stale_after_ms);
+                         SynchrocastBinarySensor *entity);
 
   SynchrocastDomain get_domain() const override {
     return SynchrocastDomain::BINARY_SENSOR;
   }
+  bool accepts_state_broadcast(uint32_t entity_hash) const override;
   void handle_intent(const SynchrocastPacket &packet) override;
   void handle_state_broadcast(const SynchrocastPacket &packet) override;
   void loop() override;
@@ -48,9 +48,6 @@ class BinarySensorHandler final : public SynchrocastDomainHandler {
   struct Publisher {
     binary_sensor::BinarySensor *source{nullptr};
     uint32_t entity_hash{0};
-    uint32_t min_interval_ms{0};
-    uint32_t refresh_interval_ms{0};
-    uint32_t last_attempt_ms{0};
     uint32_t last_sent_ms{0};
     bool observed{false};
     bool current_available{false};
@@ -64,7 +61,6 @@ class BinarySensorHandler final : public SynchrocastDomainHandler {
   struct Receiver {
     SynchrocastBinarySensor *entity{nullptr};
     uint32_t entity_hash{0};
-    uint32_t stale_after_ms{0};
     uint32_t owner_boot_id{0};
     uint32_t last_received_ms{0};
     uint32_t last_conflict_log_ms{0};

@@ -14,7 +14,7 @@ without needing the target hardware on the same board.
 3. Check [Domains and Capabilities](domains.md) to see what each ESPHome domain
    can synchronize.
 4. Follow [Synchronizing Sensor Values](sensors.md) for complete numeric,
-   binary, and text examples that create usable entities on the receiver.
+   binary, and text examples that create usable entities on the reader.
 5. Enable the focused logs in
    [Troubleshooting and Verbose Logs](troubleshooting.md) when testing devices.
 6. If ChimeraFX is on the same device, follow
@@ -43,8 +43,8 @@ ChimeraFX is optional.
 ## Project Status
 
 Synchrocast is still under development. The authenticated wire codec,
-fixed-memory dispatcher, Cover/Fan/Valve receivers, Sensor/Binary Sensor/Text
-Sensor publisher and receiver entities, and automatic `cfx_sync` transport
+fixed-memory dispatcher, Cover/Fan/Valve handlers, Sensor/Binary Sensor/Text
+Sensor leader sources and read-only entities, and automatic `cfx_sync` transport
 arbitration are implemented together with the standalone transport backend.
 The remaining actuator domains are still in development.
 

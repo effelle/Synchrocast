@@ -53,21 +53,16 @@ cfx_sync:
   key: !secret cfx_sync_key
   transport: auto
 
-# Synchrocast publishes a measured value and registers a fan receiver.
+# Synchrocast shares a measured value and registers the fan domain.
 synchrocast:
   id: room_general_sync
-  role: satellite
+  role: leader
   group: living_room_general
   key: !secret synchrocast_key
   transport: auto
 
   sensors:
-    publish:
-      - source: local_power
-        sync_id: living_room.power
-        min_interval: 1s
-        refresh_interval: 30s
-        delta: 1
+    living_room_power: local_power
 
   fans:
     - room_fan
@@ -87,7 +82,7 @@ different protocols:
 The keys do not need to match. Separate private keys make the boundary easier
 to understand and maintain.
 
-> The Sensor, Binary Sensor, and Text Sensor publish/receive paths are live.
+> The Sensor, Binary Sensor, and Text Sensor leader-to-reader paths are live.
 > Cover, Fan, and Valve currently have receive handlers, but their automatic
 > outbound state observers are not implemented yet.
 
@@ -154,8 +149,8 @@ Useful startup states are:
 - `waiting for cfx_sync`: CFX was detected but its transport is not ready.
 - `blocked`: the explicit transport or UDP-port request conflicts with CFX.
 
-During traffic, `Broadcast ...` confirms a Synchrocast publisher handed off a
-frame. `Published remote ...` confirms a receiver authenticated and applied it.
+During traffic, `Broadcast ...` confirms a Synchrocast leader source handed off
+a frame. `Published remote ...` confirms a reader authenticated and applied it.
 A periodic Synchrocast stats line separates authentication, malformed-frame,
 replay, role, queue, and send failures.
 

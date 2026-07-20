@@ -26,17 +26,17 @@ class SynchrocastSensor final : public sensor::Sensor {
 class SensorHandler final : public SynchrocastDomainHandler {
  public:
   static constexpr size_t MAX_ENTITIES = 16;
+  static constexpr uint32_t STATE_REFRESH_INTERVAL_MS = 60000;
+  static constexpr uint32_t RECEIVER_STALE_AFTER_MS = 180000;
 
   void set_parent(SynchrocastComponent *parent) { this->parent_ = parent; }
-  bool register_publisher(uint32_t entity_hash, sensor::Sensor *source,
-                          uint32_t min_interval_ms,
-                          uint32_t refresh_interval_ms, float delta);
-  bool register_receiver(uint32_t entity_hash, SynchrocastSensor *entity,
-                         uint32_t stale_after_ms);
+  bool register_publisher(uint32_t entity_hash, sensor::Sensor *source);
+  bool register_receiver(uint32_t entity_hash, SynchrocastSensor *entity);
 
   SynchrocastDomain get_domain() const override {
     return SynchrocastDomain::SENSOR;
   }
+  bool accepts_state_broadcast(uint32_t entity_hash) const override;
   void handle_intent(const SynchrocastPacket &packet) override;
   void handle_state_broadcast(const SynchrocastPacket &packet) override;
   void loop() override;
@@ -46,11 +46,7 @@ class SensorHandler final : public SynchrocastDomainHandler {
   struct Publisher {
     sensor::Sensor *source{nullptr};
     uint32_t entity_hash{0};
-    uint32_t min_interval_ms{0};
-    uint32_t refresh_interval_ms{0};
-    uint32_t last_attempt_ms{0};
     uint32_t last_sent_ms{0};
-    float delta{0.0f};
     float current_value{0.0f};
     float last_sent_value{0.0f};
     bool observed{false};
@@ -63,7 +59,6 @@ class SensorHandler final : public SynchrocastDomainHandler {
   struct Receiver {
     SynchrocastSensor *entity{nullptr};
     uint32_t entity_hash{0};
-    uint32_t stale_after_ms{0};
     uint32_t owner_boot_id{0};
     uint32_t last_received_ms{0};
     uint32_t last_conflict_log_ms{0};

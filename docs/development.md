@@ -52,7 +52,7 @@ never copied onto the network.
 | Group hash | 4 | Routes one raw frame among configured groups |
 | Sender boot ID | 4 | Random nonzero identity for one boot |
 | Sequence | 4 | Monotonic nonzero counter |
-| Entity hash | 4 | `sync_id` or current actuator identity |
+| Entity hash | 4 | Observational share key or current actuator identity |
 | Payload | 0-64 | Explicit domain representation |
 | Authentication tag | 16 | Truncated HMAC-SHA256 over header and payload |
 
@@ -140,20 +140,24 @@ Core storage uses fixed compile-time bounds:
 | Replay table | 8 boot sessions | Fixed array, oldest entry replaced |
 | Standalone group sinks | 8 pointers | One transport shared by all groups |
 | Standalone UDP receive | 251-byte stack buffer | At most 4 datagrams per poll |
-| Observational handler | 16 publishers plus 16 receivers per instantiated domain | No heap-backed map |
+| Observational handler | 16 leader sources or 16 receiver interests per instantiated domain | No heap-backed map |
 | Component instances | 8 maximum | Matches shared-consumer bound |
 
 Text Sensor is the only current domain that needs a 64-byte application
-payload. If no text sensor publisher or receiver is configured, the preprocessor
+payload. If no text sensor source or interest is configured, the preprocessor
 keeps each packet at 32 bytes and avoids the larger queue. The Text Sensor
 handler itself is also omitted when unused.
 
-Each observational handler reserves its publisher and receiver tables only when
-that domain is configured. A text publisher keeps one fixed last-sent buffer;
+Each observational handler reserves its source and interest tables only when
+that domain is configured. A text source keeps one fixed last-sent buffer;
 the current value remains owned by the ESPHome source entity until it is copied
 into the bounded packet. This avoids a second 64-byte buffer per publisher.
 
 ## Queue and Loop Behavior
+
+Authenticated state broadcasts are checked against the local domain handler and
+observational share-key interests before queueing. Unwanted broadcasts increase
+the `filtered` statistic but consume no dispatcher slot.
 
 The dispatcher uses a fixed ring buffer:
 
@@ -172,32 +176,33 @@ short burst; the loop budget protects latency for other ESPHome components. A
 full queue drops the incoming packet, counts the drop, and emits only a
 rate-limited warning from the main loop.
 
-## Observational Publisher and Receiver Model
+## Immutable Observational Model
 
 Sensor, Binary Sensor, and Text Sensor handlers poll their source entity's final
 published state from the main loop. This avoids allocating per-binding callback
 closures and naturally observes the value after normal ESPHome filters.
 
-Each publisher:
+Each leader source:
 
 - retains only current and last-sent state;
-- coalesces changes during `min_interval`;
-- periodically repeats the latest absolute value at `refresh_interval`;
-- transmits unavailable explicitly;
-- applies numeric `delta` only to immediate-change traffic.
+- broadcasts changed state without a second user-configurable timer;
+- periodically repeats the latest absolute value using a fixed internal
+  recovery interval;
+- transmits unavailable explicitly.
 
-Each receiver is a native ESPHome entity. It tracks one active publisher boot
-ID for each `sync_id`, ignores competing publishers with a rate-limited warning,
-and clears ownership after `stale_after`. Stale and explicit-unavailable inputs
-invalidate the entity; they are not converted into ordinary values.
+Each receiver is a native ESPHome entity selected by a configured share key. It
+tracks one active leader boot ID, ignores competing leaders with a rate-limited
+warning, and clears ownership after a fixed internal recovery timeout. Stale
+and explicit-unavailable inputs invalidate the entity; they are not converted
+into ordinary values.
 
 Text is valid UTF-8 and at most 64 bytes. Oversized or invalid input produces
 one rate-limited-by-state warning and unavailable. It is never truncated or
 fragmented.
 
-Code generation also rejects a generated receiver reused as a publisher on the
+Code generation also rejects a generated receiver reused as a leader source on the
 same device, preventing a simple echo loop. Each handler rejects a duplicate
-hash across its own publisher and receiver tables as a second defense.
+hash across its own source and interest tables as a second defense.
 
 ## Domain Dispatch
 

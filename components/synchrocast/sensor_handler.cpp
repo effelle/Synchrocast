@@ -51,10 +51,7 @@ bool SensorHandler::hash_in_use_(uint32_t entity_hash) const {
 }
 
 bool SensorHandler::register_publisher(uint32_t entity_hash,
-                                       sensor::Sensor *source,
-                                       uint32_t min_interval_ms,
-                                       uint32_t refresh_interval_ms,
-                                       float delta) {
+                                       sensor::Sensor *source) {
   if (source == nullptr || entity_hash == 0 ||
       this->publisher_count_ >= MAX_ENTITIES ||
       this->hash_in_use_(entity_hash)) {
@@ -65,20 +62,13 @@ bool SensorHandler::register_publisher(uint32_t entity_hash,
   auto &publisher = this->publishers_[this->publisher_count_++];
   publisher.source = source;
   publisher.entity_hash = entity_hash;
-  publisher.min_interval_ms = min_interval_ms;
-  publisher.refresh_interval_ms = refresh_interval_ms;
-  publisher.delta = delta;
-  ESP_LOGV(TAG,
-           "Registered publisher '%s' hash=0x%08" PRIX32
-           " min=%" PRIu32 "ms refresh=%" PRIu32 "ms delta=%g",
-           source->get_name().c_str(), entity_hash, min_interval_ms,
-           refresh_interval_ms, delta);
+  ESP_LOGV(TAG, "Registered publisher '%s' share=0x%08" PRIX32,
+           source->get_name().c_str(), entity_hash);
   return true;
 }
 
 bool SensorHandler::register_receiver(uint32_t entity_hash,
-                                      SynchrocastSensor *entity,
-                                      uint32_t stale_after_ms) {
+                                      SynchrocastSensor *entity) {
   if (entity == nullptr || entity_hash == 0 ||
       this->receiver_count_ >= MAX_ENTITIES ||
       this->hash_in_use_(entity_hash)) {
@@ -89,12 +79,18 @@ bool SensorHandler::register_receiver(uint32_t entity_hash,
   auto &receiver = this->receivers_[this->receiver_count_++];
   receiver.entity = entity;
   receiver.entity_hash = entity_hash;
-  receiver.stale_after_ms = stale_after_ms;
-  ESP_LOGV(TAG,
-           "Registered receiver '%s' hash=0x%08" PRIX32
-           " stale=%" PRIu32 "ms",
-           entity->get_name().c_str(), entity_hash, stale_after_ms);
+  ESP_LOGV(TAG, "Registered interest '%s' share=0x%08" PRIX32,
+           entity->get_name().c_str(), entity_hash);
   return true;
+}
+
+bool SensorHandler::accepts_state_broadcast(uint32_t entity_hash) const {
+  for (uint8_t i = 0; i < this->receiver_count_; i++) {
+    if (this->receivers_[i].entity_hash == entity_hash) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void SensorHandler::handle_intent(const SynchrocastPacket &packet) {
@@ -172,28 +168,18 @@ void SensorHandler::observe_(Publisher &publisher) {
   publisher.observed = true;
   publisher.current_available = available;
   publisher.current_value = value;
-  if (!publisher.has_sent ||
-      publisher.last_sent_available != publisher.current_available) {
-    publisher.pending = true;
-  } else if (!available || value == publisher.last_sent_value) {
-    publisher.pending = false;
-  } else {
-    publisher.pending = publisher.delta <= 0.0f ||
-                        std::fabs(value - publisher.last_sent_value) >=
-                            publisher.delta;
-  }
+  publisher.pending = !publisher.has_sent ||
+                      publisher.last_sent_available != available ||
+                      (available && value != publisher.last_sent_value);
 }
 
 void SensorHandler::maybe_send_(Publisher &publisher, uint32_t now) {
   const bool refresh_due =
       publisher.has_sent &&
-      now - publisher.last_sent_ms >= publisher.refresh_interval_ms;
-  if ((!publisher.pending && !refresh_due) ||
-      (publisher.last_attempt_ms != 0 &&
-       now - publisher.last_attempt_ms < publisher.min_interval_ms)) {
+      now - publisher.last_sent_ms >= STATE_REFRESH_INTERVAL_MS;
+  if (!publisher.pending && !refresh_due) {
     return;
   }
-  publisher.last_attempt_ms = now;
 
   SynchrocastPacket packet;
   packet.msg_type = SynchrocastMessageType::STATE_BROADCAST;
@@ -221,8 +207,8 @@ void SensorHandler::maybe_send_(Publisher &publisher, uint32_t now) {
 void SensorHandler::expire_receivers_(uint32_t now) {
   for (uint8_t i = 0; i < this->receiver_count_; i++) {
     auto &receiver = this->receivers_[i];
-    if (!receiver.seen ||
-        now - receiver.last_received_ms < receiver.stale_after_ms) {
+    if (!receiver.seen || now - receiver.last_received_ms <
+                              RECEIVER_STALE_AFTER_MS) {
       continue;
     }
     receiver.entity->mark_unavailable();

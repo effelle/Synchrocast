@@ -14,7 +14,7 @@ from esphome.components import (
     text_sensor,
     valve,
 )
-from esphome.const import CONF_ID
+from esphome.const import CONF_ID, CONF_NAME
 from esphome.core import CORE, HexInt
 from esphome.final_validate import full_config
 
@@ -32,14 +32,8 @@ CONF_VALVES = "valves"
 CONF_SENSORS = "sensors"
 CONF_BINARY_SENSORS = "binary_sensors"
 CONF_TEXT_SENSORS = "text_sensors"
-CONF_PUBLISH = "publish"
-CONF_RECEIVE = "receive"
 CONF_SOURCE = "source"
-CONF_SYNC_ID = "sync_id"
-CONF_MIN_INTERVAL = "min_interval"
-CONF_REFRESH_INTERVAL = "refresh_interval"
-CONF_STALE_AFTER = "stale_after"
-CONF_DELTA = "delta"
+CONF_CHANNEL = "channel"
 CONF_HEARTBEAT = "heartbeat"
 CONF_TRANSPORT = "transport"
 CONF_UDP_PORT = "udp_port"
@@ -68,7 +62,7 @@ MAX_ENTITIES_PER_DOMAIN = 16
 MAX_COMPONENT_INSTANCES = 8
 MAX_TEXT_BYTES = 64
 KEY_DERIVATION_PREFIX = b"SYNCHROCAST_V1\x00"
-SYNC_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
+SHARE_KEY_PATTERN = re.compile(r"[a-z_][a-z0-9_]{0,63}")
 
 synchrocast_ns = cg.esphome_ns.namespace("synchrocast")
 SynchrocastComponent = synchrocast_ns.class_(
@@ -123,11 +117,7 @@ def _iter_configs(config):
 
 
 def _has_observable_bindings(item, option):
-    block = item.get(option, {})
-    return bool(
-        isinstance(block, dict)
-        and (block.get(CONF_PUBLISH) or block.get(CONF_RECEIVE))
-    )
+    return bool(item.get(option))
 
 
 def _is_esp8266_target():
@@ -194,16 +184,17 @@ def _validate_key(value):
     return value
 
 
-def _validate_sync_id(value):
+def _validate_share_key(value):
     value = cv.string_strict(value)
-    if not SYNC_ID_PATTERN.fullmatch(value):
+    if not SHARE_KEY_PATTERN.fullmatch(value):
         raise cv.Invalid(
-            "sync_id must be 1-64 lowercase characters using only "
-            "letters, numbers, '.', '_' or '-', and must start with a "
-            "letter or number"
+            "sensor share keys must be 1-64 lowercase characters using only "
+            "letters, numbers or '_', and must start with a letter or '_'"
         )
     if _fnv1a_32(value) == 0:
-        raise cv.Invalid("sync_id hashes to the reserved value 0; rename it")
+        raise cv.Invalid(
+            "sensor share key hashes to the reserved value 0; rename it"
+        )
     return value
 
 
@@ -260,171 +251,121 @@ def _validate_entity_list(values):
     return values
 
 
-PUBLISH_INTERVAL_SCHEMA = cv.All(
-    cv.positive_time_period_milliseconds,
-    cv.Range(
-        min=cv.TimePeriod(milliseconds=10),
-        max=cv.TimePeriod(seconds=10),
-    ),
-)
-REFRESH_INTERVAL_SCHEMA = cv.All(
-    cv.positive_time_period_milliseconds,
-    cv.Range(
-        min=cv.TimePeriod(seconds=10),
-        max=cv.TimePeriod(hours=1),
-    ),
-)
-STALE_AFTER_SCHEMA = cv.All(
-    cv.positive_time_period_milliseconds,
-    cv.Range(
-        min=cv.TimePeriod(seconds=10),
-        max=cv.TimePeriod(hours=6),
-    ),
+OBSERVATIONAL_INPUT_SCHEMA = cv.Any(
+    dict,
+    cv.ensure_list(cv.string_strict),
 )
 
 
-def _publisher_schema(source_type, default_min_interval, *, numeric=False):
-    schema = {
-        cv.Required(CONF_SOURCE): cv.use_id(source_type),
-        cv.Required(CONF_SYNC_ID): _validate_sync_id,
-        cv.Optional(
-            CONF_MIN_INTERVAL, default=default_min_interval
-        ): PUBLISH_INTERVAL_SCHEMA,
-        cv.Optional(
-            CONF_REFRESH_INTERVAL, default="60s"
-        ): REFRESH_INTERVAL_SCHEMA,
-    }
-    if numeric:
-        schema[cv.Optional(CONF_DELTA, default=0.0)] = cv.float_range(min=0)
-    return cv.Schema(schema)
-
-
-SENSOR_PUBLISH_SCHEMA = _publisher_schema(
-    sensor.Sensor, "250ms", numeric=True
-)
-BINARY_SENSOR_PUBLISH_SCHEMA = _publisher_schema(
-    binary_sensor.BinarySensor, "50ms"
-)
-TEXT_SENSOR_PUBLISH_SCHEMA = _publisher_schema(
-    text_sensor.TextSensor, "1s"
-)
-
-SENSOR_RECEIVE_SCHEMA = sensor.sensor_schema(SynchrocastSensor).extend(
-    {
-        cv.Required(CONF_SYNC_ID): _validate_sync_id,
-        cv.Optional(CONF_STALE_AFTER, default="3min"): STALE_AFTER_SCHEMA,
-    }
-)
-BINARY_SENSOR_RECEIVE_SCHEMA = binary_sensor.binary_sensor_schema(
-    SynchrocastBinarySensor
-).extend(
-    {
-        cv.Required(CONF_SYNC_ID): _validate_sync_id,
-        cv.Optional(CONF_STALE_AFTER, default="3min"): STALE_AFTER_SCHEMA,
-    }
-)
-TEXT_SENSOR_RECEIVE_SCHEMA = text_sensor.text_sensor_schema(
-    SynchrocastTextSensor
-).extend(
-    {
-        cv.Required(CONF_SYNC_ID): _validate_sync_id,
-        cv.Optional(CONF_STALE_AFTER, default="3min"): STALE_AFTER_SCHEMA,
-    }
-)
-
-
-def _validate_binding_block(block):
-    publish = block[CONF_PUBLISH]
-    receive = block[CONF_RECEIVE]
-    if len(publish) > MAX_ENTITIES_PER_DOMAIN:
-        raise cv.Invalid(
-            f"at most {MAX_ENTITIES_PER_DOMAIN} publishers are allowed "
-            "per observational domain"
-        )
-    if len(receive) > MAX_ENTITIES_PER_DOMAIN:
-        raise cv.Invalid(
-            f"at most {MAX_ENTITIES_PER_DOMAIN} receivers are allowed "
-            "per observational domain"
-        )
-
-    sync_ids = {}
-    sources = set()
-    for direction, bindings in (
-        (CONF_PUBLISH, publish),
-        (CONF_RECEIVE, receive),
-    ):
-        for binding in bindings:
-            sync_id = binding[CONF_SYNC_ID]
-            sync_hash = _fnv1a_32(sync_id)
-            previous = sync_ids.get(sync_hash)
-            if previous is not None:
-                raise cv.Invalid(
-                    f"sync_id '{sync_id}' conflicts with '{previous[1]}' "
-                    f"in {previous[0]}"
-                )
-            sync_ids[sync_hash] = (direction, sync_id)
-            if direction == CONF_PUBLISH:
-                source_name = _id_name(binding[CONF_SOURCE])
-                if source_name in sources:
-                    raise cv.Invalid(
-                        f"source '{source_name}' is published more than once "
-                        "in the same domain"
-                    )
-                sources.add(source_name)
-                if (
-                    binding[CONF_REFRESH_INTERVAL].total_milliseconds
-                    <= binding[CONF_MIN_INTERVAL].total_milliseconds
-                ):
-                    raise cv.Invalid(
-                        "refresh_interval must be greater than min_interval"
-                    )
-    return block
-
-
-def _binding_block_schema(publish_schema, receive_schema):
-    return cv.All(
-        cv.Schema(
-            {
-                cv.Optional(CONF_PUBLISH, default=[]): cv.ensure_list(
-                    publish_schema
-                ),
-                cv.Optional(CONF_RECEIVE, default=[]): cv.ensure_list(
-                    receive_schema
-                ),
-            }
-        ),
-        _validate_binding_block,
+def _friendly_share_name(share_key):
+    return " ".join(
+        part.capitalize()
+        for part in re.split(r"[._-]+", share_key)
+        if part
     )
 
 
-SENSOR_BINDING_SCHEMA = _binding_block_schema(
-    SENSOR_PUBLISH_SCHEMA, SENSOR_RECEIVE_SCHEMA
+def _validate_share_key_hashes(entries):
+    hashes = {}
+    for entry in entries:
+        share_key = entry[CONF_CHANNEL]
+        share_hash = _fnv1a_32(share_key)
+        previous = hashes.get(share_hash)
+        if previous is not None:
+            raise cv.Invalid(
+                f"sensor share key '{share_key}' conflicts with "
+                f"'{previous}'; rename one of them"
+            )
+        hashes[share_hash] = share_key
+    return entries
+
+
+def _validate_observational_domain(
+    config, option, source_type, receiver_schema
+):
+    raw = config[option]
+    if not raw:
+        config[option] = []
+        return
+
+    if config[CONF_ROLE] == ROLE_LEADER:
+        if not isinstance(raw, dict):
+            raise cv.Invalid(
+                f"{option} on a leader must map each share key to a local "
+                "ESPHome entity ID"
+            )
+        if len(raw) > MAX_ENTITIES_PER_DOMAIN:
+            raise cv.Invalid(
+                f"at most {MAX_ENTITIES_PER_DOMAIN} {option} may be shared"
+            )
+        entries = []
+        sources = set()
+        for raw_share_key, raw_source in raw.items():
+            share_key = _validate_share_key(raw_share_key)
+            source = cv.use_id(source_type)(raw_source)
+            source_name = _id_name(source)
+            if source_name in sources:
+                raise cv.Invalid(
+                    f"local entity '{source_name}' is shared more than once "
+                    f"under {option}"
+                )
+            sources.add(source_name)
+            entries.append(
+                {CONF_CHANNEL: share_key, CONF_SOURCE: source}
+            )
+        config[option] = _validate_share_key_hashes(entries)
+        return
+
+    if isinstance(raw, dict):
+        raise cv.Invalid(
+            f"{option} on {config[CONF_ROLE]} lists only the share keys this "
+            "device wants to read"
+        )
+    share_keys = cv.ensure_list(_validate_share_key)(raw)
+    if len(share_keys) > MAX_ENTITIES_PER_DOMAIN:
+        raise cv.Invalid(
+            f"at most {MAX_ENTITIES_PER_DOMAIN} {option} may be read"
+        )
+    entries = []
+    for share_key in share_keys:
+        entity_config = receiver_schema(
+            {
+                CONF_NAME: _friendly_share_name(share_key),
+                CONF_ID: share_key,
+                CONF_CHANNEL: share_key,
+            }
+        )
+        entries.append(entity_config)
+    config[option] = _validate_share_key_hashes(entries)
+
+
+SENSOR_RECEIVER_SCHEMA = sensor.sensor_schema(SynchrocastSensor).extend(
+    {cv.Required(CONF_CHANNEL): _validate_share_key}
 )
-BINARY_SENSOR_BINDING_SCHEMA = _binding_block_schema(
-    BINARY_SENSOR_PUBLISH_SCHEMA, BINARY_SENSOR_RECEIVE_SCHEMA
-)
-TEXT_SENSOR_BINDING_SCHEMA = _binding_block_schema(
-    TEXT_SENSOR_PUBLISH_SCHEMA, TEXT_SENSOR_RECEIVE_SCHEMA
-)
+BINARY_SENSOR_RECEIVER_SCHEMA = binary_sensor.binary_sensor_schema(
+    SynchrocastBinarySensor
+).extend({cv.Required(CONF_CHANNEL): _validate_share_key})
+TEXT_SENSOR_RECEIVER_SCHEMA = text_sensor.text_sensor_schema(
+    SynchrocastTextSensor
+).extend({cv.Required(CONF_CHANNEL): _validate_share_key})
 
 
 def _validate_role_bindings(config):
-    has_publishers = any(
-        config[option][CONF_PUBLISH]
-        for option in (
-            CONF_SENSORS,
-            CONF_BINARY_SENSORS,
-            CONF_TEXT_SENSORS,
-        )
+    _validate_observational_domain(
+        config, CONF_SENSORS, sensor.Sensor, SENSOR_RECEIVER_SCHEMA
     )
-    if has_publishers and config[CONF_ROLE] not in (
-        ROLE_LEADER,
-        ROLE_SATELLITE,
-    ):
-        raise cv.Invalid(
-            "sensor publishers require role: leader or role: satellite; "
-            "followers receive state and controllers send commands"
-        )
+    _validate_observational_domain(
+        config,
+        CONF_BINARY_SENSORS,
+        binary_sensor.BinarySensor,
+        BINARY_SENSOR_RECEIVER_SCHEMA,
+    )
+    _validate_observational_domain(
+        config,
+        CONF_TEXT_SENSORS,
+        text_sensor.TextSensor,
+        TEXT_SENSOR_RECEIVER_SCHEMA,
+    )
     return config
 
 
@@ -469,13 +410,15 @@ CONFIG_SCHEMA = cv.All(
                 cv.ensure_list(cv.use_id(valve.Valve)),
                 _validate_entity_list,
             ),
-            cv.Optional(CONF_SENSORS, default={}): SENSOR_BINDING_SCHEMA,
             cv.Optional(
-                CONF_BINARY_SENSORS, default={}
-            ): BINARY_SENSOR_BINDING_SCHEMA,
+                CONF_SENSORS, default=[]
+            ): OBSERVATIONAL_INPUT_SCHEMA,
             cv.Optional(
-                CONF_TEXT_SENSORS, default={}
-            ): TEXT_SENSOR_BINDING_SCHEMA,
+                CONF_BINARY_SENSORS, default=[]
+            ): OBSERVATIONAL_INPUT_SCHEMA,
+            cv.Optional(
+                CONF_TEXT_SENSORS, default=[]
+            ): OBSERVATIONAL_INPUT_SCHEMA,
             cv.Optional(CONF_HEARTBEAT, default="30s"): cv.All(
                 cv.positive_time_period_milliseconds,
                 cv.Range(
@@ -557,15 +500,15 @@ def _validate_global_bindings(all_synchrocast):
             CONF_BINARY_SENSORS,
             CONF_TEXT_SENSORS,
         ):
-            block = item[option]
-            publisher_ids.update(
-                _id_name(binding[CONF_SOURCE])
-                for binding in block[CONF_PUBLISH]
-            )
-            receiver_ids.update(
-                _id_name(binding[CONF_ID])
-                for binding in block[CONF_RECEIVE]
-            )
+            bindings = item[option]
+            if item[CONF_ROLE] == ROLE_LEADER:
+                publisher_ids.update(
+                    _id_name(binding[CONF_SOURCE]) for binding in bindings
+                )
+            else:
+                receiver_ids.update(
+                    _id_name(binding[CONF_ID]) for binding in bindings
+                )
     echoed = publisher_ids & receiver_ids
     if echoed:
         entity_id = sorted(echoed)[0]
@@ -675,87 +618,53 @@ async def _register_entities(config, component, option, handler_id):
 
 
 async def _register_sensor_bindings(config, component):
-    block = config[CONF_SENSORS]
-    if not block[CONF_PUBLISH] and not block[CONF_RECEIVE]:
+    bindings = config[CONF_SENSORS]
+    if not bindings:
         return
     handler = cg.new_Pvariable(config[CONF_SENSOR_HANDLER_ID])
     cg.add(handler.set_parent(component))
-    for binding in block[CONF_PUBLISH]:
-        source = await cg.get_variable(binding[CONF_SOURCE])
-        cg.add(
-            handler.register_publisher(
-                _fnv1a_32(binding[CONF_SYNC_ID]),
-                source,
-                binding[CONF_MIN_INTERVAL].total_milliseconds,
-                binding[CONF_REFRESH_INTERVAL].total_milliseconds,
-                binding[CONF_DELTA],
-            )
-        )
-    for binding in block[CONF_RECEIVE]:
-        entity = await sensor.new_sensor(binding)
-        cg.add(
-            handler.register_receiver(
-                _fnv1a_32(binding[CONF_SYNC_ID]),
-                entity,
-                binding[CONF_STALE_AFTER].total_milliseconds,
-            )
-        )
+    for binding in bindings:
+        share_hash = _fnv1a_32(binding[CONF_CHANNEL])
+        if config[CONF_ROLE] == ROLE_LEADER:
+            source = await cg.get_variable(binding[CONF_SOURCE])
+            cg.add(handler.register_publisher(share_hash, source))
+        else:
+            entity = await sensor.new_sensor(binding)
+            cg.add(handler.register_receiver(share_hash, entity))
     cg.add(component.register_domain_handler(handler))
 
 
 async def _register_binary_sensor_bindings(config, component):
-    block = config[CONF_BINARY_SENSORS]
-    if not block[CONF_PUBLISH] and not block[CONF_RECEIVE]:
+    bindings = config[CONF_BINARY_SENSORS]
+    if not bindings:
         return
     handler = cg.new_Pvariable(config[CONF_BINARY_SENSOR_HANDLER_ID])
     cg.add(handler.set_parent(component))
-    for binding in block[CONF_PUBLISH]:
-        source = await cg.get_variable(binding[CONF_SOURCE])
-        cg.add(
-            handler.register_publisher(
-                _fnv1a_32(binding[CONF_SYNC_ID]),
-                source,
-                binding[CONF_MIN_INTERVAL].total_milliseconds,
-                binding[CONF_REFRESH_INTERVAL].total_milliseconds,
-            )
-        )
-    for binding in block[CONF_RECEIVE]:
-        entity = await binary_sensor.new_binary_sensor(binding)
-        cg.add(
-            handler.register_receiver(
-                _fnv1a_32(binding[CONF_SYNC_ID]),
-                entity,
-                binding[CONF_STALE_AFTER].total_milliseconds,
-            )
-        )
+    for binding in bindings:
+        share_hash = _fnv1a_32(binding[CONF_CHANNEL])
+        if config[CONF_ROLE] == ROLE_LEADER:
+            source = await cg.get_variable(binding[CONF_SOURCE])
+            cg.add(handler.register_publisher(share_hash, source))
+        else:
+            entity = await binary_sensor.new_binary_sensor(binding)
+            cg.add(handler.register_receiver(share_hash, entity))
     cg.add(component.register_domain_handler(handler))
 
 
 async def _register_text_sensor_bindings(config, component):
-    block = config[CONF_TEXT_SENSORS]
-    if not block[CONF_PUBLISH] and not block[CONF_RECEIVE]:
+    bindings = config[CONF_TEXT_SENSORS]
+    if not bindings:
         return
     handler = cg.new_Pvariable(config[CONF_TEXT_SENSOR_HANDLER_ID])
     cg.add(handler.set_parent(component))
-    for binding in block[CONF_PUBLISH]:
-        source = await cg.get_variable(binding[CONF_SOURCE])
-        cg.add(
-            handler.register_publisher(
-                _fnv1a_32(binding[CONF_SYNC_ID]),
-                source,
-                binding[CONF_MIN_INTERVAL].total_milliseconds,
-                binding[CONF_REFRESH_INTERVAL].total_milliseconds,
-            )
-        )
-    for binding in block[CONF_RECEIVE]:
-        entity = await text_sensor.new_text_sensor(binding)
-        cg.add(
-            handler.register_receiver(
-                _fnv1a_32(binding[CONF_SYNC_ID]),
-                entity,
-                binding[CONF_STALE_AFTER].total_milliseconds,
-            )
-        )
+    for binding in bindings:
+        share_hash = _fnv1a_32(binding[CONF_CHANNEL])
+        if config[CONF_ROLE] == ROLE_LEADER:
+            source = await cg.get_variable(binding[CONF_SOURCE])
+            cg.add(handler.register_publisher(share_hash, source))
+        else:
+            entity = await text_sensor.new_text_sensor(binding)
+            cg.add(handler.register_receiver(share_hash, entity))
     cg.add(component.register_domain_handler(handler))
 
 
@@ -774,17 +683,11 @@ async def to_code(config):
         cg.add_define("USE_SYNCHROCAST_FAN")
     if config[CONF_VALVES]:
         cg.add_define("USE_SYNCHROCAST_VALVE")
-    if config[CONF_SENSORS][CONF_PUBLISH] or config[CONF_SENSORS][CONF_RECEIVE]:
+    if config[CONF_SENSORS]:
         cg.add_define("USE_SYNCHROCAST_SENSOR")
-    if (
-        config[CONF_BINARY_SENSORS][CONF_PUBLISH]
-        or config[CONF_BINARY_SENSORS][CONF_RECEIVE]
-    ):
+    if config[CONF_BINARY_SENSORS]:
         cg.add_define("USE_SYNCHROCAST_BINARY_SENSOR")
-    if (
-        config[CONF_TEXT_SENSORS][CONF_PUBLISH]
-        or config[CONF_TEXT_SENSORS][CONF_RECEIVE]
-    ):
+    if config[CONF_TEXT_SENSORS]:
         cg.add_define("USE_SYNCHROCAST_TEXT_SENSOR")
 
     key_bytes = [HexInt(value) for value in _derive_key(config[CONF_KEY])]

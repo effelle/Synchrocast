@@ -169,32 +169,38 @@ class SynchrocastArchitectureTests(unittest.TestCase):
         self.assertIn("MAX_ENTITIES_PER_DOMAIN = 16", python)
         self.assertIn("MAX_COMPONENT_INSTANCES = 8", python)
         self.assertIn("MAX_TEXT_BYTES = 64", python)
-        self.assertIn("at most {MAX_ENTITIES_PER_DOMAIN} publishers", python)
-        self.assertIn("at most {MAX_ENTITIES_PER_DOMAIN} receivers", python)
+        self.assertIn("at most {MAX_ENTITIES_PER_DOMAIN} {option} may be shared", python)
+        self.assertIn("at most {MAX_ENTITIES_PER_DOMAIN} {option} may be read", python)
         self.assertIn("group_hashes", python)
         self.assertIn("conflicts with '{previous_group}'", python)
         self.assertIn("duplicate entity ID", python)
         self.assertIn('"Synchrocast hash; rename one of them"', python)
 
-    def test_observational_schema_is_explicit_and_loop_safe(self):
+    def test_observational_schema_uses_leader_mappings_and_reader_interests(self):
         python = PY_COMPONENT.read_text(encoding="utf-8")
 
-        for option in (
-            "CONF_SOURCE",
+        self.assertIn('CONF_CHANNEL = "channel"', python)
+        self.assertIn("SHARE_KEY_PATTERN", python)
+        self.assertIn("OBSERVATIONAL_INPUT_SCHEMA", python)
+        self.assertIn("must map each share key to a local", python)
+        self.assertIn("lists only the share keys", python)
+        self.assertIn("CONF_ID: share_key", python)
+        self.assertIn("cannot also be a publisher", python)
+        self.assertIn("sensor.sensor_schema(SynchrocastSensor)", python)
+        self.assertIn("binary_sensor.binary_sensor_schema(", python)
+        self.assertIn("text_sensor.text_sensor_schema(", python)
+        self.assertIn("handler.register_publisher(share_hash, source)", python)
+        self.assertIn("handler.register_receiver(share_hash, entity)", python)
+        for removed_option in (
+            "CONF_PUBLISH",
+            "CONF_RECEIVE",
             "CONF_SYNC_ID",
             "CONF_MIN_INTERVAL",
             "CONF_REFRESH_INTERVAL",
             "CONF_STALE_AFTER",
             "CONF_DELTA",
         ):
-            self.assertIn(option, python)
-        self.assertIn("SYNC_ID_PATTERN", python)
-        self.assertIn("refresh_interval must be greater than min_interval", python)
-        self.assertIn("cannot also be a publisher", python)
-        self.assertIn("role: leader or role: satellite", python)
-        self.assertIn("sensor.sensor_schema(SynchrocastSensor)", python)
-        self.assertIn("binary_sensor.binary_sensor_schema(", python)
-        self.assertIn("text_sensor.text_sensor_schema(", python)
+            self.assertNotIn(removed_option, python)
 
     def test_key_is_derived_and_used_by_builtin_codec(self):
         python = PY_COMPONENT.read_text(encoding="utf-8")
@@ -294,6 +300,41 @@ class SynchrocastArchitectureTests(unittest.TestCase):
             self.assertIn("owner_boot_id", source)
             self.assertIn("Ignoring competing publisher", source)
             self.assertIn("expire_receivers_", source)
+
+        for header_path in (SENSOR_HEADER, BINARY_SENSOR_HEADER, TEXT_SENSOR_HEADER):
+            header = header_path.read_text(encoding="utf-8")
+            self.assertIn("accepts_state_broadcast", header)
+            self.assertIn("STATE_REFRESH_INTERVAL_MS = 60000", header)
+            self.assertIn("RECEIVER_STALE_AFTER_MS = 180000", header)
+            for removed_field in (
+                "min_interval_ms",
+                "refresh_interval_ms",
+                "stale_after_ms",
+                "last_attempt_ms",
+            ):
+                self.assertNotIn(removed_field, header)
+
+    def test_dispatcher_filters_unwanted_state_before_queueing(self):
+        header = DISPATCHER_HEADER.read_text(encoding="utf-8")
+        source = (COMPONENT / "synchrocast_dispatcher.cpp").read_text(
+            encoding="utf-8"
+        )
+        types = TYPES_HEADER.read_text(encoding="utf-8")
+
+        self.assertIn("FILTERED", header)
+        self.assertIn("uint32_t filtered", header)
+        self.assertIn("accepts_state_broadcast", types)
+        self.assertRegex(
+            source,
+            re.compile(
+                r"packet\.msg_type == SynchrocastMessageType::STATE_BROADCAST"
+                r".*?accepts_state_broadcast\(packet\.entity_hash\)"
+                r".*?this->stats_\.filtered\+\+"
+                r".*?return SynchrocastEnqueueResult::FILTERED"
+                r".*?this->queue_\[tail\] = packet",
+                re.DOTALL,
+            ),
+        )
 
     def test_text_is_utf8_bounded_and_never_truncated(self):
         header = TEXT_SENSOR_HEADER.read_text(encoding="utf-8")

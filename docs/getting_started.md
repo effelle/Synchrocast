@@ -1,60 +1,36 @@
 # Getting Started
 
-This guide copies one numeric sensor from an ESPHome device to another. The
-receiving device gets a normal ESPHome sensor that can appear in Home Assistant
-and be used in automations. You do not need to create a template sensor on the
-receiver.
-
-Synchrocast is the complete synchronization component. It uses its own ESP-NOW
-transport by default on ESP32 and UDP by default on ESP8266. ChimeraFX is not
+This guide shares one existing numeric sensor from an ESPHome leader to a
+read-only follower. Synchrocast is complete on its own; ChimeraFX is not
 required.
 
-## What You Need
+## 1. Add the Repository
 
-- Two ESPHome devices.
-- A working ESPHome YAML file for each device.
-- One existing sensor on the publishing device. The receiver does not need the
-  same hardware.
-
-ESP32 is the preferred target for low-latency ESP-NOW. ESP8266 uses UDP.
-
-## Step 1: Add the Repositories
-
-Add Synchrocast to every participating device:
+Add this to every participating ESPHome file:
 
 ```yaml
 external_components:
   - source: github://effelle/Synchrocast@stage
+    components: [synchrocast]
     refresh: always
 ```
 
-Adding the repository makes Synchrocast available; the `synchrocast:` block
-enables it. Keep the device's normal `esphome:` and Wi-Fi configuration.
+Adding the repository only makes the component available. The device joins a
+group only when its YAML contains a `synchrocast:` block.
 
-`stage` is a development branch. `refresh: always` makes ESPHome check it on
-every build. Once stable releases exist, normal installations should pin a
-release tag instead.
+## 2. Add the Shared Secret
 
-Do not add a `components:` allow-list unless you know every dependency that must
-be included. An incomplete list can hide a required Synchrocast component.
-
-## Step 2: Create a Private Key
-
-Open `secrets.yaml` and add:
+Put the same secret in every device's `secrets.yaml`:
 
 ```yaml
-synchrocast_key: "replace-this-with-your-own-long-passphrase"
+synchrocast_key: "replace-with-the-same-long-random-key"
 ```
 
-Use the same value on every Synchrocast device in this group. The minimum is
-eight characters; a longer unique passphrase is better. Synchrocast uses it to
-authenticate packets and detect modification. Sensor values are **not
-encrypted**, so do not use Synchrocast to broadcast secrets over an untrusted
-network.
+Do not publish the real value in a public repository.
 
-## Step 3: Configure the Publishing Device
+## 3. Configure the Leader
 
-Assume the first device already has this sensor:
+Assume the leader already has this ESPHome sensor:
 
 ```yaml
 sensor:
@@ -62,76 +38,63 @@ sensor:
     id: phase_2_voltage
     name: "Phase 2 Voltage"
     unit_of_measurement: V
-    device_class: voltage
-    state_class: measurement
-    accuracy_decimals: 1
     update_interval: 10s
-    lambda: return 125.7;
+    lambda: return 125.7f;
 ```
 
-Add a Synchrocast publisher for it:
+Share it under a custom key:
 
 ```yaml
 synchrocast:
-  id: power_grid_sync
   role: leader
   group: power_grid
   key: !secret synchrocast_key
 
   sensors:
-    publish:
-      - source: phase_2_voltage
-        sync_id: grid.phase_2.voltage
-        min_interval: 1s
-        refresh_interval: 30s
-        delta: 0.1
+    meter_phase_2: phase_2_voltage
 ```
 
-`source` is the local ESPHome sensor. `sync_id` is the stable network name for
-this value. Synchrocast observes the final sensor state after ESPHome filters,
-then sends the number as a 32-bit floating-point value.
+The mapping reads `share key: local ESPHome ID`.
 
-Only `leader` and `satellite` roles may publish observed state. Use `satellite`
-when the device both publishes local state and receives other synchronized
-values.
+`meter_phase_2` is an arbitrary Synchrocast identifier. It is not a voltage
+domain, device class, or unit. `phase_2_voltage` is the local sensor that
+already exists on this leader.
 
-## Step 4: Configure the Receiving Device
+Synchrocast uses the source sensor's normal ESPHome update behavior and final
+filtered state. There are no additional publish, receive, timing, or delta
+options.
 
-Add this block to the second device:
+## 4. Configure the Follower
 
 ```yaml
 synchrocast:
-  id: power_grid_sync
   role: follower
   group: power_grid
   key: !secret synchrocast_key
-
-  sensors:
-    receive:
-      - sync_id: grid.phase_2.voltage
-        id: remote_phase_2_voltage
-        name: "Phase 2 Voltage"
-        unit_of_measurement: V
-        device_class: voltage
-        state_class: measurement
-        accuracy_decimals: 1
-        stale_after: 2min
+  sensors: meter_phase_2
 ```
 
-The devices must share:
+Synchrocast creates a read-only sensor named `Meter Phase 2`. No Template
+Sensor is needed on the follower. Its local ESPHome ID is the share key, so a
+device automation can read `id(meter_phase_2).state` directly.
 
-- `group: power_grid`;
-- the same `synchrocast_key`;
-- `sync_id: grid.phase_2.voltage`.
+A second follower uses the same block. A device that does not list
+`meter_phase_2` ignores that sensor's authenticated broadcasts.
 
-The receiver's local `id` and visible `name` do not need to match the source.
-Unit, device class, state class, icon, display precision, filters, and
-automations are intentionally configured on the receiver because they describe
-how that device will use the value.
+## 5. Transport Defaults
 
-## Step 5: Enable Focused Test Logs
+You normally omit `transport`:
 
-Add this temporarily to both devices:
+- ESP32 uses ESP-NOW.
+- ESP8266 uses UDP.
+- A mixed ESP32/ESP8266 group must explicitly use `transport: udp` on every
+  member.
+
+Standalone UDP uses port `39581` by default.
+
+## 6. Check the Logs
+
+Temporarily enable focused verbose logs:
 
 ```yaml
 logger:
@@ -143,44 +106,44 @@ logger:
     synchrocast.sensor: VERBOSE
 ```
 
-At startup, look for `Transport state=standalone active`. On the publishing
-device, `Broadcast numeric state` confirms that Synchrocast encoded and sent
-the value. On the receiver, `Published remote numeric value` confirms that the
-authenticated packet reached the native sensor.
+At startup, look for `Transport state=standalone active`. On the leader,
+`Broadcast numeric state` confirms transmission. On the follower,
+`Published remote numeric value` confirms that a matching authenticated
+broadcast reached the read-only sensor.
 
-Remove verbose logging after testing. Packet-level logs are intentionally not
-needed for normal operation.
+The dispatcher statistics include `filtered`. That counter increases when the
+device receives a valid state broadcast for a domain or share key it did not
+configure.
 
-## Step 6: Use the Received Sensor
+Remove verbose logging after testing.
 
-The received entity is a normal ESPHome sensor. For example:
+## 7. Add More Sensors
+
+Leader:
 
 ```yaml
-interval:
-  - interval: 30s
-    then:
-      - if:
-          condition:
-            lambda: return id(remote_phase_2_voltage).has_state();
-          then:
-            - logger.log:
-                format: "Remote voltage is %.1f V"
-                args: [id(remote_phase_2_voltage).state]
-          else:
-            - logger.log: "Remote voltage is unavailable"
+sensors:
+  meter_voltage: local_voltage
+  meter_current: local_current
+  meter_power: local_power
 ```
 
-Always check `has_state()` before using a remote numeric value in a lambda. If
-the publisher stops refreshing for longer than `stale_after`, Synchrocast marks
-the receiver unavailable instead of leaving an old reading looking current.
+Follower interested in only voltage and power:
 
-## What to Read Next
+```yaml
+sensors:
+  - meter_voltage
+  - meter_power
+```
 
-- [Synchronizing Sensor Values](sensors.md) explains numeric, binary, and text
-  values, including energy totals and traffic controls.
-- [Configuration Reference](configuration.md) lists every accepted option.
-- [Troubleshooting and Verbose Logs](troubleshooting.md) explains the most
-  useful messages when a value does not arrive.
-- [Domains and Capabilities](domains.md) shows the status of actuator domains.
-- [Using Synchrocast with ChimeraFX](chimerafx.md) is only for devices that also
-  use ChimeraFX lights or Magic Buttons.
+The leader still sends one broadcast per state. Receivers perform their own
+small, fixed-capacity interest check and discard unwanted values before
+queueing them.
+
+## Next Steps
+
+- [Four-device sensor and cover example](example_sensor_cover.md)
+- [Complete sensor guide](sensors.md)
+- [Configuration reference](configuration.md)
+- [Troubleshooting](troubleshooting.md)
+- [Using Synchrocast with ChimeraFX](chimerafx.md)

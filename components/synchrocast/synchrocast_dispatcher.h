@@ -15,6 +15,7 @@ namespace synchrocast {
 enum class SynchrocastEnqueueResult : uint8_t {
   QUEUED,
   COALESCED,
+  FILTERED,
   QUEUE_FULL,
   INVALID_PACKET,
 };
@@ -23,6 +24,7 @@ struct SynchrocastDispatcherStats {
   uint32_t received{0};
   uint32_t queued{0};
   uint32_t coalesced{0};
+  uint32_t filtered{0};
   uint32_t dropped{0};
   uint32_t invalid{0};
   uint32_t dispatched{0};

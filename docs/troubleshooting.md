@@ -45,14 +45,14 @@ A dispatcher line looks like:
 | --- | --- |
 | `type` | `INTENT_REQUEST`, `STATE_BROADCAST`, or `HEARTBEAT`. |
 | `domain` | ESPHome value or actuator type carried by the packet. |
-| `entity` | Compact hash of observational `sync_id`, or of the actuator ESPHome ID. |
+| `entity` | Compact hash of an observational share key, or of the actuator ESPHome ID. |
 | `intent` | Absolute value/state operation or user command. |
 | `payload` | Application value bytes; a numeric sensor uses four. |
 | `queue` | Decoded packets still waiting for the main loop. |
 
 The hash is useful for comparing log lines, but users should compare the YAML
 names that produce it. For Sensor, Binary Sensor, and Text Sensor, compare
-`sync_id`. For the current Cover, Fan, and Valve receivers, compare the local
+the custom share key. For the current Cover, Fan, and Valve handlers, compare the local
 ESPHome entity ID.
 
 ## Transport States
@@ -110,8 +110,8 @@ missing new values warrants a sender log capture.
 
 ### `Rejected role`
 
-The packet type is not allowed from the claimed role. Observed state may come
-from a `leader` or `satellite`; future command intents may come from a
+The packet type is not allowed from the claimed role. Observed sensor state may
+come from a `leader`; future command intents may come from a
 `controller` or `satellite`. A `follower` cannot publish sensor state.
 
 ### `malformed` or `unsupported type`
@@ -122,47 +122,48 @@ frame for its group rather than letting unsafe data reach an ESPHome entity.
 
 ## Observational Value Problems
 
-### The publisher never logs `Broadcast ...`
+### The leader never logs `Broadcast ...`
 
 - Confirm the source entity has a valid state.
-- Confirm it is listed under `publish`, not `receive`.
-- Confirm the Synchrocast role is `leader` or `satellite`.
+- Confirm the leader maps the share key to the correct local ESPHome ID.
+- Confirm the Synchrocast role is `leader`.
 - Confirm the transport state is `standalone active` or, on a device that also
   uses ChimeraFX, `attached to cfx_sync`.
-- Remember that `min_interval` limits retries as well as successful sends.
 
 A numeric `NaN` or infinite source is unavailable. Text that is invalid UTF-8
 or longer than 64 bytes is also unavailable.
 
-### The receiver has no value
+### The reader has no value
 
-- Compare `group`, key, domain, and `sync_id` on both devices.
-- Confirm one side uses `publish` and the other uses `receive`.
-- Check the receiver's `rx_authenticated`, dispatcher, and domain-handler logs
+- Compare `group`, key, domain, and share key on both devices.
+- Confirm the leader maps that share key and the reader lists it under the same
+  observational domain.
+- Check the reader's `rx_authenticated`, dispatcher, and domain-handler logs
   in that order.
-- Make sure `stale_after` is comfortably longer than `refresh_interval`.
 
-The receiver does not need a template entity. The entity created inside
-`receive:` is the value to use.
+The reader does not need a template entity. Synchrocast creates a native,
+read-only ESPHome entity for every share key it lists.
 
-### `No numeric receiver`, `No binary receiver`, or `No text receiver`
+### The dispatcher `filtered` counter rises
 
-The authenticated packet reached the right domain handler, but its hashed
-`sync_id` is not registered on this device. Compare spelling, punctuation, and
-case. A valid `sync_id` is lowercase and contains no spaces.
+This is normally expected. The device received an authenticated broadcast whose
+domain or share key it did not request, so Synchrocast discarded it before the
+packet queue. If a wanted value is missing, compare the share key's spelling,
+underscores, and case. A valid share key is lowercase and contains no spaces.
 
 ### `Ignoring competing publisher`
 
-Two active devices are publishing the same group, domain, and `sync_id`. The
-receiver keeps the first authenticated publisher and ignores the contender so
-the value cannot jump between sources. Remove the duplicate publisher. After
-the current owner becomes stale, a new publisher may take ownership.
+Two active leaders are publishing the same group, domain, and share key. The
+reader keeps the first authenticated leader and ignores the contender so the
+value cannot jump between sources. Remove the duplicate mapping. After the
+current owner becomes stale, a new leader may take ownership.
 
 ### `Numeric receiver stale`, `Binary receiver stale`, or `Text receiver stale`
 
-No refresh arrived before `stale_after`. The local entity was intentionally
-marked unavailable instead of retaining an old value. Check publisher power,
-transport state, `refresh_interval`, key, and signal quality.
+No recovery refresh arrived before Synchrocast's fixed internal timeout. The
+local entity was intentionally marked unavailable instead of retaining an old
+value. Check leader power, transport state, key, and signal quality. This timeout
+is a safety behavior, not a YAML setting.
 
 ### `Text state rejected`
 
@@ -215,7 +216,7 @@ loop could apply them. Warnings are rate-limited. Occasional state coalescing is
 normal; repeated full-queue warnings need investigation:
 
 - look for a sender transmitting in a tight loop;
-- increase a needlessly short `min_interval`;
+- check whether the source sensor itself updates unnecessarily often;
 - check whether another ESPHome component blocks the main loop;
 - inspect `queue=` and the periodic dispatcher statistics.
 
@@ -227,22 +228,22 @@ normal; repeated full-queue warnings need investigation:
 - Remove an incomplete `components:` allow-list.
 - Confirm the ESPHome host can reach GitHub while preparing the build.
 
-### ESPHome rejects a role, duplicate, or interval
+### ESPHome rejects a role, mapping, or duplicate
 
-Schema rejection is deliberate. Common causes are a publisher on a `follower`,
-the same `sync_id` twice in one domain, one generated receiver republished on
-the same device, more than 16 bindings, or `refresh_interval` not being longer
-than `min_interval`.
+Schema rejection is deliberate. Common causes are a source mapping on a
+non-leader, using a mapping where a reader must provide a list, the same share
+key twice in one domain, reusing one generated reader as a leader source, or
+more than 16 entries in a domain.
 
 ## Capturing a Useful Report
 
 Include:
 
 - ESPHome and Synchrocast versions or pinned branches;
-- sender and receiver roles;
-- domain and `sync_id` (or actuator ESPHome ID);
+- leader and reader roles;
+- domain and share key (or actuator ESPHome ID);
 - transport state on both devices;
-- publisher, authentication/stats, dispatcher, and receiver-handler lines;
+- leader-source, authentication/stats, dispatcher, and reader-handler lines;
 - the smallest YAML configuration that reproduces the problem.
 
 Never publish Synchrocast keys, Wi-Fi passwords, or other secrets.
