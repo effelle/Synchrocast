@@ -15,11 +15,14 @@ receiving entity applies only actions and state that make sense for its domain.
 | Media Player | `media_players` | Play, pause, volume, playback state | Planned |
 | Valve | `valves` | Open, close, stop, toggle, position | Handler implemented |
 | Switch | `switches` | On, off, toggle, switch state | Planned |
-| Sensor | `sensors` | Numeric state broadcast | Planned for Step 2 |
-| Binary Sensor | `binary_sensors` | On/off state broadcast | Planned for Step 2 |
+| Sensor | `sensors` | Numeric publish and native receive entity | Implemented |
+| Binary Sensor | `binary_sensors` | On/off publish and native receive entity | Implemented |
+| Text Sensor | `text_sensors` | UTF-8 text publish and native receive entity | Implemented |
 
 "Planned" means the domain belongs to the public Synchrocast scope but is not
-ready to configure in the current skeleton.
+ready to configure in the current branch. Cover, Fan, and Valve currently have
+receive handlers; automatic outbound state observation for those actuator
+domains is still pending.
 
 ## Cover
 
@@ -130,15 +133,38 @@ Switch synchronization is planned for on, off, toggle intents, and absolute
 on/off state. Toggle is appropriate for a user command; synchronized state uses
 an absolute value.
 
-## Sensor and Binary Sensor
+## Sensor, Binary Sensor, and Text Sensor
 
 Sensors report state and do not accept actuator commands.
 
-- Sensor publishes a numeric value.
-- Binary Sensor publishes an on/off value.
+- Sensor carries one finite 32-bit numeric value.
+- Binary Sensor carries `ON`, `OFF`, or unavailable.
+- Text Sensor carries valid UTF-8 text up to 64 bytes, or unavailable.
 
-The sensor-handler milestone will receive those broadcasts and publish them
-through local ESPHome template entities on the destination device.
+The publisher watches an existing ESPHome entity. The receiver is created by
+Synchrocast as a native ESPHome entity, so the destination does not need a
+template just to unpack a network value. Only the explicit `sync_id` must match
+between devices; units, names, display precision, filters, and automations are
+configured locally.
+
+```yaml
+synchrocast:
+  role: follower
+  group: utility_room
+  key: !secret synchrocast_key
+  sensors:
+    receive:
+      - sync_id: utility.voltage
+        id: remote_voltage
+        name: "Remote Voltage"
+        unit_of_measurement: V
+        device_class: voltage
+        state_class: measurement
+        stale_after: 2min
+```
+
+See [Synchronizing Sensor Values](sensors.md) for complete numeric, binary, and
+text publisher/receiver examples.
 
 ## One Device with Several Domains
 
@@ -154,11 +180,15 @@ synchrocast:
     - ventilation_fan
   valves:
     - water_valve
+  sensors:
+    publish:
+      - source: room_temperature
+        sync_id: utility_room.temperature
 ```
 
 Only configured domains should create handlers and reserve their entity tables.
 This keeps small devices from paying the memory cost of unused domains.
 
-Switch, Sensor, and Binary Sensor will be addable to the same block after their
-handlers and schema options are implemented. They are omitted above so the
-example remains valid with the current `stage` branch.
+An observational handler uses fixed-capacity publisher and receiver tables.
+Text Sensor support also enables the larger 64-byte application payload; builds
+without text sensors retain the smaller packet and dispatcher queue footprint.

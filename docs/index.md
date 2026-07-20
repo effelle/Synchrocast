@@ -13,9 +13,11 @@ without needing the target hardware on the same board.
    entities, roles, or groups.
 3. Check [Domains and Capabilities](domains.md) to see what each ESPHome domain
    can synchronize.
-4. Enable the focused logs in
+4. Follow [Synchronizing Sensor Values](sensors.md) for complete numeric,
+   binary, and text examples that create usable entities on the receiver.
+5. Enable the focused logs in
    [Troubleshooting and Verbose Logs](troubleshooting.md) when testing devices.
-5. If ChimeraFX is on the same device, follow
+6. If ChimeraFX is on the same device, follow
    [Using Synchrocast with ChimeraFX](chimerafx.md).
 
 Developers and contributors can read
@@ -24,27 +26,27 @@ and simulation boundary.
 
 ## A Simple Mental Model
 
-Think of a Synchrocast group as one room or one system. In the finished wire
-protocol, every device in the group will use the same group name and private
-key.
+Think of a Synchrocast group as one room or one system. Every device in the
+group uses the same group name and private key.
 
 | Role | What it does |
 | --- | --- |
-| `leader` | Holds the main state for the group. |
-| `follower` | Copies the leader. |
-| `controller` | Will send user actions but has no local synchronized entity. |
-| `satellite` | Will follow the leader and report local state or controls. |
+| `leader` | Holds and publishes the main state for the group. |
+| `follower` | Receives state as ordinary local ESPHome entities. |
+| `controller` | Reserved for command-only devices; mappings are still planned. |
+| `satellite` | Publishes local state while also receiving state; command mappings are still planned. |
 
-For configuration and simulation work, begin with one leader and one follower.
-Controller mappings and live cross-device exchange are not implemented yet.
+Begin with one leader and one follower. Live cross-device traffic on `stage`
+currently uses the shared transport supplied by a configured ChimeraFX
+`cfx_sync` instance; the standalone transport backend remains pending.
 
 ## Project Status
 
-Synchrocast is still under development. Cover, Fan, and Valve application
-handlers, the fixed-memory dispatcher, their initial YAML registration, and
-automatic `cfx_sync` transport arbitration are implemented. The authenticated
-wire codec, standalone transport backend, and remaining domains are still in
-development.
+Synchrocast is still under development. The authenticated wire codec,
+fixed-memory dispatcher, Cover/Fan/Valve receivers, Sensor/Binary Sensor/Text
+Sensor publisher and receiver entities, and automatic `cfx_sync` transport
+arbitration are implemented. The standalone transport backend and remaining
+actuator domains are still in development.
 
 The planned public domain scope is:
 
@@ -58,3 +60,4 @@ The planned public domain scope is:
 - Switch
 - Sensor
 - Binary Sensor
+- Text Sensor

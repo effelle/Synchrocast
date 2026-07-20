@@ -157,6 +157,11 @@ void SynchrocastDispatcher::loop() {
     this->stats_.dispatched++;
   }
 
+  for (auto *handler : this->handlers_) {
+    if (handler != nullptr) {
+      handler->loop();
+    }
+  }
   this->maybe_log_queue_drops_(dropped_total);
 }
 
@@ -166,6 +171,11 @@ void SynchrocastDispatcher::dump_config() {
   ESP_LOGCONFIG(TAG, "  Queue: %u packets, %u bytes", static_cast<unsigned>(QUEUE_CAPACITY),
                 static_cast<unsigned>(sizeof(this->queue_)));
   ESP_LOGCONFIG(TAG, "  Per-loop dispatch budget: %u packets", static_cast<unsigned>(MAX_PACKETS_PER_LOOP));
+  for (auto *handler : this->handlers_) {
+    if (handler != nullptr) {
+      handler->dump_config();
+    }
+  }
 }
 
 uint8_t SynchrocastDispatcher::queue_depth() {

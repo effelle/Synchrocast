@@ -51,6 +51,8 @@ const char *synchrocast_domain_to_string(SynchrocastDomain domain) {
       return "SENSOR";
     case SynchrocastDomain::BINARY_SENSOR:
       return "BINARY_SENSOR";
+    case SynchrocastDomain::TEXT_SENSOR:
+      return "TEXT_SENSOR";
     default:
       return "UNKNOWN_DOMAIN";
   }

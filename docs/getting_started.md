@@ -1,48 +1,53 @@
 # Getting Started
 
-This guide shows the shortest configuration path: one leader, one follower, and
-one cover shared between them.
+This guide copies one numeric sensor from an ESPHome device to another. The
+receiving device gets a normal ESPHome sensor that can appear in Home Assistant
+and be used in automations. You do not need to create a template sensor on the
+receiver.
 
-> **Before you start:** these Cover examples now validate and generate the
-> application layer. Live network synchronization still requires the upcoming
-> authenticated Synchrocast wire codec. Use this guide for configuration and
-> simulation preparation, not for a finished installation yet.
+> **Current `stage` limitation:** the authenticated Synchrocast protocol is
+> working, but its standalone ESP-NOW/UDP backend is not ready yet. Live packets
+> currently travel through an already configured ChimeraFX `cfx_sync` transport.
+> Without `cfx_sync`, the YAML still validates and the entities are created, but
+> no packets cross the network. See
+> [Using Synchrocast with ChimeraFX](chimerafx.md) before testing two devices.
 
 ## What You Need
 
 - Two ESPHome devices.
 - A working ESPHome YAML file for each device.
-- Both devices connected to the same Wi-Fi network for setup and management.
-- One local ESPHome entity on each device that represents the same logical
-  entity. The first example uses a cover.
+- A valid `cfx_sync:` configuration on each device for live network transport
+  at this development stage.
+- One existing sensor on the publishing device. The receiver does not need the
+  same hardware.
 
-ESP32 is the preferred target for the lowest-latency ESP-NOW transport. The
-standalone ESP-NOW/UDP backend remains in development. When `cfx_sync` is also
-configured, Synchrocast automatically borrows its active transport.
+ESP32 is the preferred target for low-latency ESP-NOW. CFX can also provide UDP
+where its own configuration enables it.
 
-## Step 1: Add the Repository
+## Step 1: Add the Repositories
 
-Add this block to every device that will use Synchrocast:
+Add both sources to every device that participates in the live test:
 
 ```yaml
 external_components:
+  - source: github://effelle/ChimeraFX@stage
+    refresh: always
+
   - source: github://effelle/Synchrocast@stage
     refresh: always
 ```
 
-ESPHome will download Synchrocast from
-[GitHub](https://github.com/effelle/Synchrocast) when it prepares the device.
+Adding a repository makes its components available; it does not enable them.
+Keep the device's normal `esphome:`, Wi-Fi, and `cfx_sync:` configuration.
 
-The project currently targets `stage`. Once stable releases exist, normal users
-should pin a release tag instead of following the development branch.
+`stage` is a development branch. `refresh: always` makes ESPHome check it on
+every build. Once stable releases exist, normal installations should pin a
+release tag instead.
 
-`refresh: always` is useful during development because ESPHome checks for new
-files on every build. Remove it or pin a release after your setup is stable.
+Do not add a `components:` allow-list unless you know every dependency that must
+be included. An incomplete list can hide a required Synchrocast component.
 
-Do not add a `components:` allow-list for the normal GitHub installation. An
-incomplete allow-list can hide a required Synchrocast domain from ESPHome.
-
-## Step 2: Create the Shared Key
+## Step 2: Create a Private Key
 
 Open `secrets.yaml` and add:
 
@@ -50,108 +55,142 @@ Open `secrets.yaml` and add:
 synchrocast_key: "replace-this-with-your-own-long-passphrase"
 ```
 
-Use the same key on every device in the group. Choose a private passphrase with
-at least eight characters. You do not need to generate a hexadecimal key. The
-current skeleton validates this value but does not authenticate live traffic
-until the wire-codec milestone is implemented.
+Use the same value on every Synchrocast device in this group. The minimum is
+eight characters; a longer unique passphrase is better. Synchrocast uses it to
+authenticate packets and detect modification. Sensor values are **not
+encrypted**, so do not use Synchrocast to broadcast secrets over an untrusted
+network.
 
-## Step 3: Choose the Leader
+The ChimeraFX key and Synchrocast key belong to separate protocols. They may be
+different, and keeping them different is recommended.
 
-The leader owns the main state. Add the following to the first device:
+## Step 3: Configure the Publishing Device
+
+Assume the first device already has this sensor:
 
 ```yaml
-cover:
+sensor:
   - platform: template
-    name: "Garage Door"
-    id: garage_door
-    optimistic: true
-    has_position: true
+    id: phase_2_voltage
+    name: "Phase 2 Voltage"
+    unit_of_measurement: V
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 10s
+    lambda: return 125.7;
+```
 
+Add a Synchrocast publisher for it:
+
+```yaml
 synchrocast:
-  id: garage_sync
+  id: power_grid_sync
   role: leader
-  group: garage
+  group: power_grid
   key: !secret synchrocast_key
-  covers:
-    - garage_door
+
+  sensors:
+    publish:
+      - source: phase_2_voltage
+        sync_id: grid.phase_2.voltage
+        min_interval: 1s
+        refresh_interval: 30s
+        delta: 0.1
 ```
 
-Your real device can use any normal ESPHome cover platform. The template cover
-keeps this first example easy to read.
+`source` is the local ESPHome sensor. `sync_id` is the stable network name for
+this value. Synchrocast observes the final sensor state after ESPHome filters,
+then sends the number as a 32-bit floating-point value.
 
-## Step 4: Add the Follower
+Only `leader` and `satellite` roles may publish observed state. Use `satellite`
+when the device both publishes local state and receives other synchronized
+values.
 
-On the second device, add:
+## Step 4: Configure the Receiving Device
+
+Add this block to the second device:
 
 ```yaml
-cover:
-  - platform: template
-    name: "Garage Door Follower"
-    id: garage_door
-    optimistic: true
-    has_position: true
-
 synchrocast:
-  id: garage_sync
+  id: power_grid_sync
   role: follower
-  group: garage
+  group: power_grid
   key: !secret synchrocast_key
-  covers:
-    - garage_door
+
+  sensors:
+    receive:
+      - sync_id: grid.phase_2.voltage
+        id: remote_phase_2_voltage
+        name: "Phase 2 Voltage"
+        unit_of_measurement: V
+        device_class: voltage
+        state_class: measurement
+        accuracy_decimals: 1
+        stale_after: 2min
 ```
 
-The devices must share these values:
+The devices must share:
 
-- `group: garage`
-- the same `synchrocast_key`
-- `id: garage_door` for the matching entity
+- `group: power_grid`;
+- the same `synchrocast_key`;
+- `sync_id: grid.phase_2.voltage`.
 
-ESPHome IDs are local to each device, so both YAML files can safely use the same
-ID. The visible names can be different; Synchrocast matches the YAML ID.
+The receiver's local `id` and visible `name` do not need to match the source.
+Unit, device class, state class, icon, display precision, filters, and
+automations are intentionally configured on the receiver because they describe
+how that device will use the value.
 
-## Step 5: Enable Useful Test Logs
+## Step 5: Enable Focused Test Logs
 
-During early testing, add this logger configuration to both devices:
+Add this temporarily to both devices:
 
 ```yaml
 logger:
   level: VERBOSE
   logs:
+    cfx_sync.bus: VERBOSE
     synchrocast: VERBOSE
     synchrocast.dispatcher: VERBOSE
-    synchrocast.cover: VERBOSE
+    synchrocast.sensor: VERBOSE
 ```
 
-The main Synchrocast tag shows transport ownership and state. During later
-packet simulations, the dispatcher log shows the packet type, domain, entity
-identity, intent, payload size, and remaining queue depth. The cover log
-confirms the action that was applied.
+At startup, look for `Transport state=attached to cfx_sync`. On the publishing
+device, `Broadcast numeric state` confirms that Synchrocast encoded and handed
+off the value. On the receiver, `Published remote numeric value` confirms that
+the authenticated packet reached the native sensor.
 
-Remove the verbose level after testing. Normal operation is intentionally quiet.
+Remove verbose logging after testing. Packet-level logs are intentionally not
+needed for normal operation.
 
-## What You Can Verify Now
+## Step 6: Use the Received Sensor
 
-With the current skeleton, ESPHome can validate and generate both YAML files.
-At startup, the log should show the role, group hash, registered Cover handler,
-and transport state. A Synchrocast-only device reports
-`standalone backend pending`; that state means Synchrocast owns the future
-transport slot, not that a network backend is already running.
+The received entity is a normal ESPHome sensor. For example:
 
-The two devices do **not** exchange live Synchrocast state yet. The authenticated
-wire codec and standalone network backend are the next transport milestone.
-Once that milestone is complete, this example is designed to provide:
+```yaml
+interval:
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            lambda: return id(remote_phase_2_voltage).has_state();
+          then:
+            - logger.log:
+                format: "Remote voltage is %.1f V"
+                args: [id(remote_phase_2_voltage).state]
+          else:
+            - logger.log: "Remote voltage is unavailable"
+```
 
-- opening the leader opens the follower;
-- closing the leader closes the follower;
-- stopping the leader stops the follower;
-- changing the leader position changes the follower position;
-- a normal intent can toggle the target;
-- a relative toggle is not accepted as a state broadcast, because applying it
-  to devices with different starting states could make them diverge.
+Always check `has_state()` before using a remote numeric value in a lambda. If
+the publisher stops refreshing for longer than `stale_after`, Synchrocast marks
+the receiver unavailable instead of leaving an old reading looking current.
 
-## Next Steps
+## What to Read Next
 
-- Read [Configuration Reference](configuration.md) to add other roles or groups.
-- Read [Domains and Capabilities](domains.md) before adding another domain.
-- Use [Troubleshooting and Verbose Logs](troubleshooting.md) when a device does
-  not react as expected.
+- [Synchronizing Sensor Values](sensors.md) explains numeric, binary, and text
+  values, including energy totals and traffic controls.
+- [Configuration Reference](configuration.md) lists every accepted option.
+- [Troubleshooting and Verbose Logs](troubleshooting.md) explains the most
+  useful messages when a value does not arrive.
+- [Domains and Capabilities](domains.md) shows the status of actuator domains.

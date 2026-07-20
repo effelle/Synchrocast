@@ -34,7 +34,7 @@ class SynchrocastDispatcher final {
  public:
   static constexpr uint8_t QUEUE_CAPACITY = 16;
   static constexpr uint8_t MAX_PACKETS_PER_LOOP = 4;
-  static constexpr size_t DOMAIN_SLOT_COUNT = static_cast<size_t>(SynchrocastDomain::BINARY_SENSOR) + 1;
+  static constexpr size_t DOMAIN_SLOT_COUNT = static_cast<size_t>(SynchrocastDomain::TEXT_SENSOR) + 1;
 
   bool register_handler(SynchrocastDomainHandler *handler);
 

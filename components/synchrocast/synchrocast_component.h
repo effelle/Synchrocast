@@ -5,36 +5,23 @@
 
 #include "cfx_sync_transport_adapter.h"
 #include "synchrocast_dispatcher.h"
+#include "synchrocast_packet_codec.h"
 #include "synchrocast_transport_runtime.h"
 
 #include "esphome/core/component.h"
 
-#include <cstddef>
+#include <array>
 #include <cstdint>
 
 namespace esphome {
 namespace synchrocast {
-
-enum class SynchrocastRole : uint8_t {
-  LEADER = 0,
-  FOLLOWER = 1,
-  CONTROLLER = 2,
-  SATELLITE = 3,
-};
-
-class SynchrocastTransportFrameHandler {
- public:
-  virtual ~SynchrocastTransportFrameHandler() = default;
-  virtual bool handle_transport_frame(
-      const SynchrocastTransportSource &source, const uint8_t *data,
-      size_t size, SynchrocastDispatcher &dispatcher) = 0;
-};
 
 class SynchrocastComponent final : public Component,
                                    public SynchrocastTransportPacketSink {
  public:
   void set_role(SynchrocastRole role) { this->role_ = role; }
   void set_group_hash(uint32_t group_hash) { this->group_hash_ = group_hash; }
+  void set_key(const std::array<uint8_t, 32> &key) { this->key_ = key; }
   void set_transport_owner(SynchrocastTransportOwner owner) {
     this->transport_owner_ = owner;
   }
@@ -47,10 +34,6 @@ class SynchrocastComponent final : public Component,
   void set_heartbeat_interval(uint32_t interval_ms) {
     this->heartbeat_interval_ms_ = interval_ms;
   }
-  void set_frame_handler(SynchrocastTransportFrameHandler *handler) {
-    this->frame_handler_ = handler;
-  }
-
   bool register_domain_handler(SynchrocastDomainHandler *handler) {
     return this->dispatcher_.register_handler(handler);
   }
@@ -66,6 +49,7 @@ class SynchrocastComponent final : public Component,
       size_t size) {
     return this->transport_runtime_.send_to(destination, data, size);
   }
+  bool send_packet(const SynchrocastPacket &packet);
 
   void setup() override;
   void loop() override;
@@ -82,7 +66,21 @@ class SynchrocastComponent final : public Component,
   }
 
  protected:
+  struct ReplayState {
+    bool active{false};
+    uint32_t boot_id{0};
+    uint32_t last_sequence{0};
+    uint32_t last_seen_ms{0};
+  };
+
   static const char *role_to_string_(SynchrocastRole role);
+  static const char *decode_result_to_string_(SynchrocastDecodeResult result);
+  bool role_allows_message_(SynchrocastRole role,
+                            SynchrocastMessageType type) const;
+  bool accept_sequence_(uint32_t boot_id, uint32_t sequence);
+  uint32_t next_sequence_();
+  void send_heartbeat_();
+  void maybe_log_stats_();
   void log_transport_transition_(SynchrocastTransportState state);
 
   SynchrocastDispatcher dispatcher_;
@@ -90,7 +88,8 @@ class SynchrocastComponent final : public Component,
 #ifdef USE_SYNCHROCAST_CFX_SYNC_BRIDGE
   CFXSyncTransportAdapter cfx_sync_adapter_;
 #endif
-  SynchrocastTransportFrameHandler *frame_handler_{nullptr};
+  std::array<uint8_t, 32> key_{};
+  std::array<ReplayState, 8> replay_states_{};
   SynchrocastRole role_{SynchrocastRole::FOLLOWER};
   SynchrocastTransportOwner transport_owner_{
       SynchrocastTransportOwner::SYNCHROCAST};
@@ -99,9 +98,23 @@ class SynchrocastComponent final : public Component,
   SynchrocastTransportState last_logged_transport_state_{
       SynchrocastTransportState::UNCONFIGURED};
   uint32_t group_hash_{0};
+  uint32_t boot_id_{0};
+  uint32_t tx_sequence_{0};
   uint32_t heartbeat_interval_ms_{30000};
+  uint32_t last_heartbeat_ms_{0};
+  uint32_t last_heartbeat_attempt_ms_{0};
+  uint32_t last_stats_log_ms_{0};
   uint32_t shared_frames_received_{0};
   uint32_t shared_frames_claimed_{0};
+  uint32_t packets_sent_{0};
+  uint32_t physical_frames_sent_{0};
+  uint32_t send_failures_{0};
+  uint32_t authenticated_packets_{0};
+  uint32_t malformed_packets_{0};
+  uint32_t authentication_failures_{0};
+  uint32_t replayed_packets_{0};
+  uint32_t role_rejections_{0};
+  uint32_t enqueue_failures_{0};
   uint16_t requested_udp_port_{0};
 };
 

@@ -1,170 +1,244 @@
 # Troubleshooting and Verbose Logs
 
-Synchrocast keeps normal logs quiet. During setup or simulation, enable verbose
-logs to see how a packet moves through the application layer.
+Synchrocast keeps normal logs quiet. Enable focused verbose logs temporarily
+when a value is missing or a device does not react.
 
-## Enable Focused Logs
-
-Add the tags for the domains you are testing:
+## Enable the Relevant Tags
 
 ```yaml
 logger:
   level: VERBOSE
   logs:
+    cfx_sync.bus: VERBOSE
     synchrocast: VERBOSE
     synchrocast.dispatcher: VERBOSE
+    synchrocast.sensor: VERBOSE
+    synchrocast.binary_sensor: VERBOSE
+    synchrocast.text_sensor: VERBOSE
     synchrocast.cover: VERBOSE
     synchrocast.fan: VERBOSE
     synchrocast.valve: VERBOSE
 ```
 
-Remove the verbose level after testing. Packet-by-packet logs are useful for
-development but unnecessarily noisy for a finished device.
+Keep only the domains you are testing. Remove verbose logging after setup;
+packet-by-packet output is unnecessarily noisy during normal operation.
 
-## Reading a Dispatch Log
+## Follow a Value from Publisher to Receiver
 
-A dispatcher line looks like this:
+For an observational value, look for these stages:
+
+1. Publisher: `Broadcast numeric state`, `Broadcast binary state`, or
+   `Broadcast text state`.
+2. Receiver main tag: the `rx_authenticated` counter increases.
+3. Dispatcher: a `Dispatch type=STATE_BROADCAST ...` line appears.
+4. Receiver handler: `Published remote ...` confirms the native ESPHome entity
+   was updated.
+
+A dispatcher line looks like:
 
 ```text
-[V][synchrocast.dispatcher]: Dispatch type=STATE_BROADCAST domain=COVER entity=0xA1B2C3D4 intent=SET_POSITION payload=4 queue=0
+[V][synchrocast.dispatcher]: Dispatch type=STATE_BROADCAST domain=SENSOR entity=0xA1B2C3D4 intent=SET_VALUE payload=4 queue=0
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `type` | `INTENT_REQUEST`, `STATE_BROADCAST`, or `HEARTBEAT`. |
-| `domain` | ESPHome entity type selected for the packet. |
-| `entity` | Compact identity derived from the matching ESPHome entity ID. |
-| `intent` | Requested action or absolute state operation. |
-| `payload` | Number of payload bytes used by this packet. |
-| `queue` | Packets still waiting after this packet was removed. |
+| `domain` | ESPHome value or actuator type carried by the packet. |
+| `entity` | Compact hash of observational `sync_id`, or of the actuator ESPHome ID. |
+| `intent` | Absolute value/state operation or user command. |
+| `payload` | Application value bytes; a numeric sensor uses four. |
+| `queue` | Decoded packets still waiting for the main loop. |
 
-The matching handler then confirms what it applied:
+The hash is useful for comparing log lines, but users should compare the YAML
+names that produce it. For Sensor, Binary Sensor, and Text Sensor, compare
+`sync_id`. For the current Cover, Fan, and Valve receivers, compare the local
+ESPHome entity ID.
 
-```text
-[V][synchrocast.cover]: Apply STATE_BROADCAST SET_POSITION=0.500 to 'Garage Door' hash=0xA1B2C3D4
-```
+## Transport States
 
-Together, these lines answer two different questions:
+### `attached to cfx_sync`
 
-1. Did the dispatcher route the packet?
-2. Did the domain handler apply it to the expected local entity?
+This is the expected live state when the same YAML contains a valid `cfx_sync:`
+block. CFX owns the radio/socket and Synchrocast has registered its distinct
+authenticated protocol without creating another transport.
 
-## Useful Diagnostic Messages
+### `standalone backend pending`
+
+No `cfx_sync:` owner was detected. The Synchrocast configuration and native
+entities still work locally, but the standalone ESP-NOW/UDP backend is not
+implemented on the current `stage` branch, so network packets do not flow.
+
+### `waiting for cfx_sync`
+
+Synchrocast found CFX and will not start a second transport. Check earlier CFX
+logs for an ESP-NOW or UDP startup error. There is intentionally no hidden
+fallback.
+
+### `blocked`
+
+The explicit Synchrocast transport is not active in CFX, or a configured UDP
+port conflicts with inherited port `39580`. Return to `transport: auto`, remove
+the Synchrocast `udp_port`, and fix the CFX startup problem.
+
+## Packet Rejections
+
+### `authentication failed`
+
+An `SCST` frame named this group but did not have a valid authentication tag.
+The most common setup cause is a different Synchrocast key on the sender and
+receiver. Compare the secret values without posting them in logs or issue
+reports.
+
+Authentication protects integrity and identity within the shared-key group. It
+does not encrypt the value.
+
+### `unsupported version`
+
+The devices use incompatible Synchrocast protocol versions. Pin the same
+repository branch or release on every member, clean ESPHome's external
+component cache if necessary, and rebuild both devices.
+
+### `Rejected duplicate/stale frame`
+
+Synchrocast has already accepted this sender sequence, or an older copy arrived
+after a newer one. This can be normal when the same authenticated packet reaches
+the device over both ESP-NOW and UDP. A rapidly growing replay counter with
+missing new values warrants a sender log capture.
+
+### `Rejected role`
+
+The packet type is not allowed from the claimed role. Observed state may come
+from a `leader` or `satellite`; future command intents may come from a
+`controller` or `satellite`. A `follower` cannot publish sensor state.
+
+### `malformed` or `unsupported type`
+
+The frame has invalid lengths, fields, payload semantics, or a domain that this
+build intentionally did not include. Synchrocast claims and discards a malformed
+frame for its group rather than letting unsafe data reach an ESPHome entity.
+
+## Observational Value Problems
+
+### The publisher never logs `Broadcast ...`
+
+- Confirm the source entity has a valid state.
+- Confirm it is listed under `publish`, not `receive`.
+- Confirm the Synchrocast role is `leader` or `satellite`.
+- Confirm the transport state is `attached to cfx_sync`.
+- Remember that `min_interval` limits retries as well as successful sends.
+
+A numeric `NaN` or infinite source is unavailable. Text that is invalid UTF-8
+or longer than 64 bytes is also unavailable.
+
+### The receiver has no value
+
+- Compare `group`, key, domain, and `sync_id` on both devices.
+- Confirm one side uses `publish` and the other uses `receive`.
+- Check the receiver's `rx_authenticated`, dispatcher, and domain-handler logs
+  in that order.
+- Make sure `stale_after` is comfortably longer than `refresh_interval`.
+
+The receiver does not need a template entity. The entity created inside
+`receive:` is the value to use.
+
+### `No numeric receiver`, `No binary receiver`, or `No text receiver`
+
+The authenticated packet reached the right domain handler, but its hashed
+`sync_id` is not registered on this device. Compare spelling, punctuation, and
+case. A valid `sync_id` is lowercase and contains no spaces.
+
+### `Ignoring competing publisher`
+
+Two active devices are publishing the same group, domain, and `sync_id`. The
+receiver keeps the first authenticated publisher and ignores the contender so
+the value cannot jump between sources. Remove the duplicate publisher. After
+the current owner becomes stale, a new publisher may take ownership.
+
+### `Numeric receiver stale`, `Binary receiver stale`, or `Text receiver stale`
+
+No refresh arrived before `stale_after`. The local entity was intentionally
+marked unavailable instead of retaining an old value. Check publisher power,
+transport state, `refresh_interval`, key, and signal quality.
+
+### `Text state rejected`
+
+The source is longer than 64 UTF-8 bytes or is not valid UTF-8. The log includes
+the byte length. Accented characters and many symbols use more than one byte.
+Synchrocast does not truncate or split the string; shorten it at the source.
+
+## Dispatcher and Actuator Messages
 
 ### `No handler`
 
-```text
-[V][synchrocast.dispatcher]: No handler: type=STATE_BROADCAST domain=LIGHT ...
-```
-
-The packet reached the dispatcher, but that domain handler was not registered.
-Check that the domain is implemented and listed in the device configuration.
+The packet was valid, but this device did not configure that domain. Only used
+domains are compiled and registered to avoid wasting memory.
 
 ### `No cover`, `No fan`, or `No valve`
 
-The domain handler exists, but no local entity matches the incoming identity.
-
-- Compare the YAML entity IDs on sender and receiver.
-- Check that the entity is listed under the correct Synchrocast domain.
-- Remember that visible Home Assistant names do not perform the matching.
+The receive handler exists, but no listed local entity matches the packet hash.
+Compare the ESPHome entity IDs, not the visible Home Assistant names.
 
 ### `Rejected relative TOGGLE state`
 
-This is intentional. Toggle is relative to a device's current state. Applying a
-toggle as synchronized state could make two devices move in opposite directions.
-Use an absolute state broadcast instead.
+This is intentional. Toggle is relative to each device's current state, so
+using it as an absolute broadcast could make devices diverge. State broadcasts
+must carry an absolute state or position.
 
 ### `Rejected SET_POSITION`
 
-For Cover and Valve, position must be a finite value from 0% to 100%. The
-application payload uses the equivalent range from `0.0` to `1.0`.
+Cover and Valve position must be finite and between `0.0` closed and `1.0`
+open.
 
 ### `Rejected fan speed`
 
-Fan speed must be a whole level supported by the receiving fan. If a fan exposes
-three levels, accepted values are 1, 2, and 3.
+Fan speed must be a whole level supported by the receiver. A three-speed fan
+accepts 1, 2, or 3, not a fraction or out-of-range value.
 
-### `Packet queue full`
+### The Cover, Fan, or Valve leader does not transmit
+
+Automatic outbound observation for these actuator domains is not implemented
+yet. Their current lists register receive handlers. Sensor, Binary Sensor, and
+Text Sensor have the complete publisher/receiver path.
+
+## Queue Pressure
 
 ```text
 [W][synchrocast.dispatcher]: Packet queue full; dropped=3 capacity=16
 ```
 
-The producer delivered packets faster than the main loop could apply them.
-Warnings are rate-limited so a busy queue cannot flood the logger.
+The authenticated producer delivered packets faster than the cooperative main
+loop could apply them. Warnings are rate-limited. Occasional state coalescing is
+normal; repeated full-queue warnings need investigation:
 
-Occasional state coalescing is normal and does not produce a warning. Repeated
-queue-full warnings need investigation:
+- look for a sender transmitting in a tight loop;
+- increase a needlessly short `min_interval`;
+- check whether another ESPHome component blocks the main loop;
+- inspect `queue=` and the periodic dispatcher statistics.
 
-- Look for a sender transmitting the same command in a tight loop.
-- Check whether another ESPHome component is blocking the main loop.
-- Check the remaining `queue=` value in verbose dispatch logs.
-- Capture dispatcher statistics during simulation.
+## Repository and Schema Errors
 
-## Common Setup Problems
+### `Component not found: synchrocast`
 
-### ESPHome reports `Component not found: synchrocast`
-
-- Confirm the `external_components` source is
-  `github://effelle/Synchrocast@stage`.
+- Confirm the source is `github://effelle/Synchrocast@stage`.
 - Remove an incomplete `components:` allow-list.
-- Confirm the device can reach GitHub during preparation.
+- Confirm the ESPHome host can reach GitHub while preparing the build.
 
-### `Transport state=attached to cfx_sync`
+### ESPHome rejects a role, duplicate, or interval
 
-This is the expected result when the same YAML contains a `cfx_sync:` block.
-CFX owns the radio/socket and Synchrocast has attached without creating another
-transport.
+Schema rejection is deliberate. Common causes are a publisher on a `follower`,
+the same `sync_id` twice in one domain, one generated receiver republished on
+the same device, more than 16 bindings, or `refresh_interval` not being longer
+than `min_interval`.
 
-### `Transport state=standalone backend pending`
+## Capturing a Useful Report
 
-Synchrocast owns the transport slot because no `cfx_sync:` block was found.
-In the current skeleton, the standalone ESP-NOW/UDP backend is still under
-development, so this state does not yet mean that network packets are flowing.
+Include:
 
-### `Transport state=waiting for cfx_sync`
-
-Synchrocast detected `cfx_sync`, so it will not start a second transport. Check
-the earlier CFX logs for an ESP-NOW or UDP startup error. There is intentionally
-no silent fallback.
-
-### Transport arbitration is blocked
-
-The requested Synchrocast transport is not provided by the active CFX bus, or
-an explicit UDP port conflicts with inherited port `39580`. Use
-`transport: auto`, remove the Synchrocast `udp_port`, and correct the CFX startup
-error before retrying.
-
-### The follower does not react
-
-Live cross-device state is not implemented in the current skeleton, so this is
-expected outside an application-layer simulation. If you are injecting decoded
-test packets, confirm the group, matching entity ID, domain, packet type, and
-intent shown in the verbose dispatcher log.
-
-### A controller does nothing
-
-The `controller` role is accepted for topology preparation, but the
-`controls:` mapping is not implemented yet. The current schema rejects that
-option instead of pretending the input is active.
-
-### `Shared frame left unclaimed`
-
-CFX delivered a non-CFX packet through its shared transport hook, but the
-authenticated Synchrocast wire codec is not installed yet. This verbose message
-is expected during bridge development and does not mean that CFX lost one of
-its own packets.
-
-## Capturing a Useful Simulation Log
-
-When reporting a problem, include:
-
-- sender role and receiver role;
-- domain and intended action;
-- matching entity IDs from both YAML files;
-- the dispatcher line;
-- the domain-handler line or rejection line;
-- any queue-full warning;
+- ESPHome and Synchrocast versions or pinned branches;
+- sender and receiver roles;
+- domain and `sync_id` (or actuator ESPHome ID);
+- transport state on both devices;
+- publisher, authentication/stats, dispatcher, and receiver-handler lines;
 - the smallest YAML configuration that reproduces the problem.
 
-Avoid publishing your Synchrocast key, Wi-Fi password, or other secrets.
+Never publish Synchrocast keys, Wi-Fi passwords, or other secrets.

@@ -1,41 +1,45 @@
 # Using Synchrocast with ChimeraFX
 
-This guide is for a device that needs both components. A common example is:
+This guide is for a device that needs both components. For example, ChimeraFX
+can synchronize a light and provide Magic Button behavior while Synchrocast
+receives a power sensor or prepares a Fan, Cover, or Valve receiver.
 
-- ChimeraFX `cfx_sync` synchronizes a light and provides Magic Button behavior.
-- Synchrocast registers a Fan, Cover, or Valve on the same ESPHome device.
+The components do not merge their configurations or packet formats. They share
+only the already-running ESP-NOW/UDP transport:
 
-Both protocols can use ESP-NOW or UDP, but the device must not start two owners
-for the same radio and socket resources. When both YAML blocks are configured,
-ChimeraFX owns the transport and Synchrocast attaches to it automatically.
+- `cfx_sync` remains responsible for ChimeraFX lights and controls.
+- Synchrocast remains responsible for its own groups, roles, entities, packet
+  authentication, replay protection, and domain handling.
+- CFX owns the radio/socket once, and Synchrocast uses that owner rather than
+  starting a competing network stack.
 
-> Synchrocast is currently an early skeleton. Transport sharing and YAML
-> registration are implemented, but the authenticated Synchrocast wire codec
-> is not. This guide prepares a valid coexistence configuration; live
-> Synchrocast state exchange comes in a later milestone.
+This is the current live transport path on `stage`. A standalone Synchrocast
+ESP-NOW/UDP backend is still pending.
 
 ## 1. Add Both Repositories
 
-Put both sources in `external_components:`. Their order does not matter:
+Put both sources in one `external_components:` list. Their order does not
+matter:
 
 ```yaml
 external_components:
   - source: github://effelle/ChimeraFX@stage
     refresh: always
+
   - source: github://effelle/Synchrocast@stage
     refresh: always
 ```
 
-Adding a repository only makes its components available. It does not enable
-either component by itself.
+Adding a repository makes its components available. It does not enable either
+one until its YAML block is present.
 
-## 2. Configure Each Component for Its Own Job
+## 2. Give Each Component Its Own Job
 
-The example below assumes `room_light` and `room_fan` are already declared in
-the same ESPHome YAML file:
+The following example assumes `room_light`, `room_fan`, and `local_power` are
+already declared elsewhere in the same ESPHome file:
 
 ```yaml
-# Specialized ChimeraFX light synchronization.
+# ChimeraFX owns specialized light synchronization.
 cfx_sync:
   id: room_light_sync
   role: follower
@@ -45,42 +49,66 @@ cfx_sync:
   key: !secret cfx_sync_key
   transport: auto
 
-# General Synchrocast fan registration.
+# Synchrocast publishes a measured value and registers a fan receiver.
 synchrocast:
-  id: room_fan_sync
-  role: follower
-  fans:
-    - room_fan
-  group: living_room_fan
+  id: room_general_sync
+  role: satellite
+  group: living_room_general
   key: !secret synchrocast_key
   transport: auto
+
+  sensors:
+    publish:
+      - source: local_power
+        sync_id: living_room.power
+        min_interval: 1s
+        refresh_interval: 30s
+        delta: 1
+
+  fans:
+    - room_fan
 ```
 
-No bridge ID or extra transport block is required. Synchrocast detects the
-configured `cfx_sync:` integration during ESPHome validation.
+No bridge ID or extra transport block is needed. Synchrocast detects the
+configured `cfx_sync:` integration during ESPHome validation and attaches to
+its bus.
 
-The group names and keys above are intentionally different. They belong to
-different packet protocols and do not need to match. Devices participating in
-the same CFX group must share the CFX group and key; devices participating in
-the same Synchrocast group must share the Synchrocast group and key.
+The group names and keys above are intentionally different. They protect two
+different protocols:
 
-## 3. Understand Who Owns What
+- every member of `living_room_lights` uses the same CFX group and CFX key;
+- every member of `living_room_general` uses the same Synchrocast group and
+  Synchrocast key.
+
+The keys do not need to match. Separate private keys make the boundary easier
+to understand and maintain.
+
+> The Sensor, Binary Sensor, and Text Sensor publish/receive paths are live.
+> Cover, Fan, and Valve currently have receive handlers, but their automatic
+> outbound state observers are not implemented yet.
+
+## 3. What Happens to a Packet
 
 | Resource or responsibility | Owner |
 | --- | --- |
 | Start and manage ESP-NOW | `cfx_sync` |
-| Open and poll the shared UDP socket | `cfx_sync` |
-| CFX peers, authentication, and packet parsing | `cfx_sync` |
-| Recognize and parse Synchrocast packets | Synchrocast wire codec |
-| Route decoded Fan, Cover, or Valve packets | Synchrocast dispatcher |
+| Open and poll the UDP socket | `cfx_sync` |
+| Recognize, authenticate, and decode `CFXS` frames | `cfx_sync` |
+| Recognize, authenticate, and decode `SCST` frames | Synchrocast |
+| Reject duplicate Synchrocast frames | Synchrocast |
+| Route a Synchrocast value to its local ESPHome entity | Synchrocast |
 
-CFX first checks whether an incoming packet belongs to its protocol. Valid CFX
-packets and malformed CFX-looking packets stay inside CFX. Only packets that
-are clearly not CFX are offered to registered shared-protocol consumers. This
-prevents another component from accidentally claiming a damaged CFX packet.
+On receive, CFX first checks its own packet signature. A valid CFX packet, or a
+damaged packet that clearly claims to be CFX, stays inside ChimeraFX. A frame
+that is not CFX is offered to registered shared-transport consumers.
+Synchrocast claims an `SCST` frame for one of its configured groups, verifies
+the authentication tag and sequence, then queues the decoded value for the
+ESPHome main loop.
 
-The sharing hook uses fixed-capacity registration and raw byte buffers. It does
-not allocate a new packet container on every receive or send.
+On send, Synchrocast builds and authenticates its own `SCST` frame, then asks
+the CFX-owned bus to broadcast those raw bytes. The frame never becomes a CFX
+message. This separation is why both components can share one protocol carrier
+without confusing their application behavior.
 
 ## 4. Transport Rules
 
@@ -90,14 +118,18 @@ For normal use, leave both components on `transport: auto`.
 - On ESP8266, CFX uses UDP.
 - If Synchrocast explicitly requests `espnow` or `udp`, that transport must
   already be active in CFX.
-- Attached UDP always inherits CFX's internal port `39580`.
-- Synchrocast never starts a hidden second transport if CFX is unavailable.
-  It waits or reports a blocked configuration instead.
+- Attached UDP inherits CFX port `39580`.
+- Synchrocast does not start or stop the shared radio, open a second socket,
+  change the Wi-Fi channel, or maintain a competing peer table.
+- If CFX is configured but not ready, Synchrocast waits. It never silently
+  falls back to another owner.
 
-That last rule is intentional: one visible owner is safer and easier to debug
-than two components silently competing for the same resources.
+Merely downloading the ChimeraFX repository is not enough. A valid `cfx_sync:`
+block must be configured because that running component is the transport owner.
 
-## 5. Enable Focused Logs While Testing
+## 5. Focused Logs
+
+Use verbose logs temporarily while setting up the pair:
 
 ```yaml
 logger:
@@ -106,20 +138,26 @@ logger:
     cfx_sync.bus: VERBOSE
     synchrocast: VERBOSE
     synchrocast.dispatcher: VERBOSE
-    synchrocast.fan: VERBOSE
+    synchrocast.sensor: VERBOSE
+    synchrocast.binary_sensor: VERBOSE
+    synchrocast.text_sensor: VERBOSE
 ```
 
-After startup, look for one of these Synchrocast states:
+Useful startup states are:
 
-- `attached to cfx_sync`: CFX is active and Synchrocast attached successfully.
-- `waiting for cfx_sync`: Synchrocast found CFX and is waiting for its selected
-  transport to become active.
-- `blocked`: the explicit transport or UDP-port request conflicts with what CFX
-  provides. Return to `transport: auto` and inspect the preceding CFX log.
+- `attached to cfx_sync`: the selected CFX transport is active and shared.
+- `waiting for cfx_sync`: CFX was detected but its transport is not ready.
+- `blocked`: the explicit transport or UDP-port request conflicts with CFX.
 
-During development, `Shared frame left unclaimed` means the sharing hook worked
-but no authenticated Synchrocast wire decoder claimed that raw frame. This is
-expected until the codec milestone is complete.
+During traffic, `Broadcast ...` confirms a Synchrocast publisher handed off a
+frame. `Published remote ...` confirms a receiver authenticated and applied it.
+A periodic Synchrocast stats line separates authentication, malformed-frame,
+replay, role, queue, and send failures.
 
-Remove verbose logging after testing. Normal operation is designed to remain
-quiet.
+`Shared frame left unclaimed` no longer means that the Synchrocast codec is
+missing. It means the raw frame did not belong to any registered consumer. An
+occasional message can be another protocol on the same transport; repeated
+messages should be investigated with the sender and authentication logs.
+
+Remove verbose logging after testing. Normal operation is designed to stay
+quiet and network-driven warnings are rate-limited.

@@ -3,10 +3,26 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace esphome {
 namespace synchrocast {
+
+static constexpr size_t SYNCHROCAST_WIRE_MAX_PAYLOAD_SIZE = 64;
+#ifdef USE_SYNCHROCAST_TEXT_SENSOR
+static constexpr size_t SYNCHROCAST_MAX_PAYLOAD_SIZE =
+    SYNCHROCAST_WIRE_MAX_PAYLOAD_SIZE;
+#else
+static constexpr size_t SYNCHROCAST_MAX_PAYLOAD_SIZE = 16;
+#endif
+
+enum class SynchrocastRole : uint8_t {
+  LEADER = 0,
+  FOLLOWER = 1,
+  CONTROLLER = 2,
+  SATELLITE = 3,
+};
 
 enum class SynchrocastMessageType : uint8_t {
   HEARTBEAT = 0,
@@ -30,6 +46,7 @@ enum class SynchrocastDomain : uint8_t {
   ALARM_PANEL,
   SENSOR,
   BINARY_SENSOR,
+  TEXT_SENSOR,
 };
 
 enum class SynchrocastIntent : uint8_t {
@@ -63,23 +80,31 @@ union SynchrocastPayload {
   float float_val;
   uint32_t hash_val;
   bool bool_val;
-  uint8_t raw_bytes[16];
+  uint8_t raw_bytes[SYNCHROCAST_MAX_PAYLOAD_SIZE];
 };
 
-// Keep the 4-byte fields first so this application-layer packet occupies 24
-// bytes without packing or unaligned accesses. Transport codecs must serialize
-// fields explicitly and must not send this in-memory structure verbatim.
+// Keep the 4-byte fields first and never send this in-memory structure
+// verbatim. The wire codec serializes every multibyte field explicitly.
 struct SynchrocastPacket {
   uint32_t entity_hash{0};
+  uint32_t source_boot_id{0};
   SynchrocastPayload payload{};
   SynchrocastMessageType msg_type{SynchrocastMessageType::HEARTBEAT};
   SynchrocastDomain domain{SynchrocastDomain::UNKNOWN};
   SynchrocastIntent intent{SynchrocastIntent::NONE};
+  SynchrocastRole source_role{SynchrocastRole::FOLLOWER};
   uint8_t payload_len{0};
 };
 
-static_assert(sizeof(SynchrocastPayload) == 16, "Synchrocast payload size changed");
-static_assert(sizeof(SynchrocastPacket) == 24, "Synchrocast packet must remain compact");
+static_assert(sizeof(SynchrocastPayload) == SYNCHROCAST_MAX_PAYLOAD_SIZE,
+              "Synchrocast payload size changed");
+#ifdef USE_SYNCHROCAST_TEXT_SENSOR
+static_assert(sizeof(SynchrocastPacket) == 80,
+              "Synchrocast packet must remain bounded");
+#else
+static_assert(sizeof(SynchrocastPacket) == 32,
+              "Synchrocast packet must remain compact without text sensors");
+#endif
 
 class SynchrocastDomainHandler {
  public:
@@ -87,6 +112,8 @@ class SynchrocastDomainHandler {
   virtual SynchrocastDomain get_domain() const = 0;
   virtual void handle_intent(const SynchrocastPacket &packet) = 0;
   virtual void handle_state_broadcast(const SynchrocastPacket &packet) = 0;
+  virtual void loop() {}
+  virtual void dump_config() {}
 };
 
 }  // namespace synchrocast

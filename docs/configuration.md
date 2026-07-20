@@ -1,13 +1,7 @@
 # Configuration Reference
 
-This page explains the `synchrocast:` YAML block. Begin with
-[Getting Started](getting_started.md) if you have not yet tested one leader and
-one follower.
-
-> The current schema registers Cover, Fan, and Valve entities and configures
-> transport ownership. Other domains and control mappings shown in the roadmap
-> are not accepted yet. Live network synchronization still awaits the
-> authenticated Synchrocast wire codec.
+This page lists the options accepted by the current `stage` branch. If this is
+your first Synchrocast setup, begin with [Getting Started](getting_started.md).
 
 ## Basic Block
 
@@ -16,250 +10,263 @@ Every Synchrocast block needs a role, group, and key:
 ```yaml
 synchrocast:
   id: living_room_sync
-  role: leader
+  role: follower
   group: living_room
   key: !secret synchrocast_key
 ```
 
-- `role` describes what this device does in the group.
+- `role` describes what this device may send and receive.
 - `group` separates one synchronized room or system from another.
-- `key` reserves the private passphrase for the authenticated wire codec. It is
-  validated now, but no live authentication occurs until that codec is added.
-  Every future group member will need the same value.
-- `id` gives the block a readable ESPHome ID and is strongly recommended.
+- `key` authenticates every Synchrocast packet. All members of one group need
+  the same key. Authentication detects forged or modified packets; it is not
+  encryption.
+- `id` gives the block a readable local ESPHome ID and is recommended.
 
-## Adding Local Entities
+The key must contain at least 8 characters and fit in 64 UTF-8 bytes; the group
+must also fit in 64 UTF-8 bytes. Keep the key in `secrets.yaml` rather than
+copying it into files you publish.
 
-The current implementation accepts Cover, Fan, and Valve IDs:
+## Roles
+
+| Role | Receives state | Publishes observed state | Sends commands |
+| --- | --- | --- | --- |
+| `leader` | Yes | Yes | No |
+| `follower` | Yes | No | No |
+| `controller` | Yes | No | Planned |
+| `satellite` | Yes | Yes | Planned |
+
+Use one authoritative publisher for a given group, domain, and `sync_id`.
+Choose `satellite` for a device that both publishes its own sensors and receives
+other values. The current `controls:` mapping is not implemented and is rejected
+instead of being silently ignored.
+
+## Numeric Sensors
+
+`publish` points to an existing ESPHome sensor. `receive` creates a native
+ESPHome sensor on this device:
 
 ```yaml
 synchrocast:
-  id: room_sync
-  role: leader
-  group: living_room
+  role: satellite
+  group: utility_room
   key: !secret synchrocast_key
 
+  sensors:
+    publish:
+      - source: local_temperature
+        sync_id: utility.temperature
+        min_interval: 1s
+        refresh_interval: 30s
+        delta: 0.1
+
+    receive:
+      - sync_id: utility.power
+        id: remote_power
+        name: "Remote Power"
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        accuracy_decimals: 1
+        stale_after: 2min
+```
+
+The receiving entry accepts the normal ESPHome Sensor options, including
+filters and automations. Do not declare another template sensor for it.
+
+## Binary Sensors
+
+```yaml
+synchrocast:
+  role: follower
+  group: utility_room
+  key: !secret synchrocast_key
+
+  binary_sensors:
+    receive:
+      - sync_id: pump.running
+        id: remote_pump_running
+        name: "Pump Running"
+        device_class: running
+        stale_after: 2min
+```
+
+A publisher uses the same shape as a numeric publisher, without `delta`:
+
+```yaml
+binary_sensors:
+  publish:
+    - source: local_pump_running
+      sync_id: pump.running
+      min_interval: 100ms
+      refresh_interval: 30s
+```
+
+## Text Sensors
+
+```yaml
+synchrocast:
+  role: follower
+  group: inverter
+  key: !secret synchrocast_key
+
+  text_sensors:
+    receive:
+      - sync_id: inverter.status
+        id: remote_inverter_status
+        name: "Inverter Status"
+        stale_after: 3min
+```
+
+Text publishers use `source`, `sync_id`, `min_interval`, and
+`refresh_interval`. Text must be valid UTF-8 and no longer than 64 bytes.
+Synchrocast never cuts an oversized message because silent truncation could
+change its meaning; it sends unavailable instead.
+
+See [Synchronizing Sensor Values](sensors.md) for complete publisher/receiver
+examples and explanations of availability, energy totals, and automations.
+
+## Publisher Options
+
+| Option | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `source` | Yes | - | ID of the existing local Sensor, Binary Sensor, or Text Sensor. |
+| `sync_id` | Yes | - | Stable network identity shared with the receiver. |
+| `min_interval` | No | Numeric `250ms`; binary `50ms`; text `1s` | Fastest allowed send rate. |
+| `refresh_interval` | No | `60s` | Periodic repeat of the latest absolute state. Must be longer than `min_interval`. |
+| `delta` | Numeric only | `0` | Minimum numeric change for an immediate update. |
+
+`sync_id` is 1-64 lowercase characters. It must start with a letter or number
+and may then contain letters, numbers, dots, underscores, or hyphens. For
+example, `grid.phase_2.voltage` is valid.
+
+Synchrocast publishes the source's final ESPHome state after its filters. A
+non-finite numeric state is treated as unavailable. `delta` controls immediate
+traffic only; the periodic refresh still sends the newest value.
+
+## Receiver Options
+
+Every receiver needs `sync_id`. Add `id` when automations or lambdas will refer
+to the entity, and add `name` when it should be visible through the configured
+ESPHome API:
+
+| Option | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `sync_id` | Yes | - | Network identity shared with the publisher. |
+| `id` | Recommended | Generated | Local ESPHome entity ID. |
+| `name` | No | Internal entity | Visible name on this receiving device. |
+| `stale_after` | No | `3min` | No-refresh timeout before the entity becomes unavailable. |
+
+The normal options for that ESPHome entity type also work. Configure units,
+device class, state class, icons, filters, accuracy, and automations locally.
+These presentation details are not copied over the network.
+
+## Cover, Fan, and Valve Receivers
+
+The current branch also registers bounded receive handlers for Cover, Fan, and
+Valve entities:
+
+```yaml
+synchrocast:
+  role: follower
+  group: garden
+  key: !secret synchrocast_key
   covers:
-    - room_blind
+    - patio_awning
   fans:
-    - room_fan
+    - ventilation_fan
   valves:
     - irrigation_valve
 ```
 
-Each item must be the ID of an entity already declared elsewhere in the same
-ESPHome YAML file.
+Each item is an entity already declared elsewhere in the same YAML. These
+handlers can apply decoded absolute state and supported intents, but automatic
+outbound observation for these actuator domains is not implemented yet. Do not
+describe this list as a working leader-side publisher.
 
-Use the same entity ID on devices that represent the same logical entity. For
-example, two devices synchronizing a fan should both use `id: bedroom_fan`.
-Visible Home Assistant names may be different.
+For these actuator handlers, matching currently derives from the local ESPHome
+entity ID. Use the same ID on the devices that represent the same actuator.
+This differs from observational values, which always use explicit `sync_id`.
 
-## Roles
+## Multiple Values and Groups
 
-### Leader
-
-The leader is the source of truth for a group:
-
-```yaml
-synchrocast:
-  id: bedroom_sync
-  role: leader
-  group: bedroom
-  key: !secret synchrocast_key
-  fans:
-    - bedroom_fan
-```
-
-Use one leader per group.
-
-### Follower
-
-A follower receives leader state:
+One block can contain up to 16 publishers and 16 receivers in each
+observational domain. Use lists rather than another block for the same group:
 
 ```yaml
 synchrocast:
-  id: bedroom_sync
-  role: follower
-  group: bedroom
-  key: !secret synchrocast_key
-  fans:
-    - bedroom_fan
-```
-
-A follower can list several local entities. Each one is matched by its ESPHome
-ID and domain.
-
-### Controller (control mappings are planned)
-
-A controller will send local input to a remote target without owning a local
-synchronized target entity. The role is accepted now, but the `controls`
-option is not implemented yet. This is the complete configuration currently
-accepted for that role:
-
-```yaml
-synchrocast:
-  id: bedroom_controller
-  role: controller
-  group: bedroom
-  key: !secret synchrocast_key
-```
-
-It prepares the topology only; it does not send button commands in the current
-skeleton.
-
-### Satellite (local control input is planned)
-
-A satellite can register a local supported entity now. Sending local button
-input is planned for the later control-mapping milestone:
-
-```yaml
-synchrocast:
-  id: bedroom_satellite
   role: satellite
-  group: bedroom
+  group: utility_room
   key: !secret synchrocast_key
-
-  fans:
-    - bedroom_fan
+  sensors:
+    publish:
+      - source: local_voltage
+        sync_id: utility.voltage
+      - source: local_power
+        sync_id: utility.power
+    receive:
+      - sync_id: utility.temperature
+        id: remote_temperature
+        name: "Remote Temperature"
 ```
 
-Use `satellite` instead of `controller` whenever the device has a local entity
-that belongs to the synchronization group.
-
-## Control Mappings (Planned)
-
-A control mapping will connect one local input to one remote target. The
-planned vocabulary includes `open`, `close`, `stop`, and `toggle`, but the
-`controls:` option is deliberately rejected by the current schema. This keeps
-ESPHome from accepting a configuration that cannot work yet.
-
-When this milestone is implemented, the guide will include tested copy-paste
-examples and the target will match the ESPHome ID registered on the leader.
-
-## Multiple Entities in One Domain
-
-Use a YAML list when one device has several entities of the same type:
-
-```yaml
-synchrocast:
-  id: garden_sync
-  role: follower
-  group: garden
-  key: !secret synchrocast_key
-  valves:
-    - front_irrigation
-    - back_irrigation
-    - greenhouse_irrigation
-```
-
-The current fixed registry allows up to 16 local entities per domain on one
-device. This limit prevents unbounded memory growth.
-
-## Multiple Groups on One Device
-
-Declare a list of blocks when one device joins independent groups:
+Use a YAML list of Synchrocast blocks only when the device joins separate
+groups. At most eight blocks are allowed on one device:
 
 ```yaml
 synchrocast:
   - id: garage_sync
-    role: leader
+    role: follower
     group: garage
-    key: !secret synchrocast_key
-    covers:
-      - garage_door
+    key: !secret garage_sync_key
 
   - id: garden_sync
-    role: leader
+    role: follower
     group: garden
-    key: !secret synchrocast_key
-    valves:
-      - irrigation_valve
+    key: !secret garden_sync_key
 ```
 
-Each block owns its role, group, key, and entity lists. At most eight
-`synchrocast:` blocks are allowed on one device so attached consumer
-registration remains bounded.
+The same group cannot be declared twice on one device. Keep all of that group's
+domains in one block.
 
 ## Transport Options
 
-Most users should keep the default transport:
+Most users should keep the default:
 
 ```yaml
 synchrocast:
-  id: room_sync
   role: follower
   group: living_room
   key: !secret synchrocast_key
   transport: auto
 ```
 
-The current skeleton records this request for transport arbitration. If
-`cfx_sync` is configured on the same device, `auto` accepts whichever CFX
-transport is active. The standalone ESP-NOW/UDP backend is not implemented yet,
-so a Synchrocast-only device does not exchange network packets at this stage.
+The standalone Synchrocast backend is still pending. For live traffic on the
+current `stage` branch, a valid `cfx_sync:` block must be configured on the same
+device. CFX remains the only ESP-NOW/UDP owner, while Synchrocast authenticates
+and decodes its own distinct `SCST` frames.
 
-Advanced users can request `espnow` or `udp` explicitly to verify that an
-attached CFX owner provides that transport. Most users should keep `auto`.
-
-## Using ChimeraFX and Synchrocast Together
-
-Add both repositories normally and configure both `cfx_sync:` and
-`synchrocast:`. Repository order does not matter.
-
-```yaml
-external_components:
-  - source: github://effelle/Synchrocast@stage
-    refresh: always
-  - source: github://effelle/ChimeraFX@stage
-    refresh: always
-
-# ChimeraFX lights and Magic Buttons use this specialized profile.
-cfx_sync:
-  role: follower
-  group: living_room_lights
-  key: !secret cfx_sync_key
-  lights:
-    - room_light
-
-# The fan uses the general Synchrocast domain handler.
-synchrocast:
-  id: room_fan_sync
-  role: follower
-  group: living_room_fan
-  key: !secret synchrocast_key
-  fans:
-    - room_fan
-```
-
-When `cfx_sync:` is configured, it remains the sole ESP-NOW/UDP owner.
-Synchrocast attaches automatically and does not start another socket, change the
-radio channel, restart ESP-NOW, or manage a competing peer table.
-
-- Keep `transport: auto` unless you are diagnosing a problem.
-- An explicit Synchrocast transport must already be active in `cfx_sync`.
-- Attached UDP inherits CFX port `39580`.
-- Do not configure another attached UDP port.
-- Merely adding the ChimeraFX repository does not activate sharing;
-  `cfx_sync:` must be present in the device configuration.
-
-The full beginner-oriented walkthrough is in
+Advanced users may request `espnow` or `udp`, but that transport must already be
+active in CFX. Attached UDP inherits CFX port `39580`; Synchrocast does not open
+another socket or manage a competing radio peer table. See
 [Using Synchrocast with ChimeraFX](chimerafx.md).
 
-## All Options
+## Base Options
 
 | Option | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `id` | Recommended | Generated | Readable ID for this Synchrocast block. |
+| `id` | Recommended | Generated | Local ID for this Synchrocast block. |
 | `role` | Yes | - | `leader`, `follower`, `controller`, or `satellite`. |
-| `group` | Yes | - | Devices with the same group communicate together. |
-| `key` | Yes | - | Passphrase reserved for the upcoming authenticated codec. Validated now; not used for live packets yet. Minimum eight characters. |
-| `covers` | No | Empty | Local Cover IDs. Implemented. |
-| `fans` | No | Empty | Local Fan IDs. Implemented. |
-| `valves` | No | Empty | Local Valve IDs. Implemented. |
-| `heartbeat` | No | `30s` | Reserved leader refresh interval. Stored and reported now; no heartbeat packet is emitted yet. |
+| `group` | Yes | - | Communication group; up to 64 UTF-8 bytes. |
+| `key` | Yes | - | Packet-authentication passphrase; at least 8 characters and at most 64 UTF-8 bytes. |
+| `covers` | No | Empty | Existing local Cover receivers. |
+| `fans` | No | Empty | Existing local Fan receivers. |
+| `valves` | No | Empty | Existing local Valve receivers. |
+| `sensors` | No | Empty | Numeric `publish` and `receive` lists. |
+| `binary_sensors` | No | Empty | On/off `publish` and `receive` lists. |
+| `text_sensors` | No | Empty | UTF-8 text `publish` and `receive` lists. |
+| `heartbeat` | No | `30s` | Authenticated presence packet interval; minimum `10s`. |
 | `transport` | No | `auto` | `auto`, `espnow`, or `udp`. |
-| `udp_port` | No | Attached `39580` | Optional validation of the UDP port inherited from CFX. Rejected for standalone mode until that backend exists. |
+| `udp_port` | No | Attached `39580` | Optional check of the CFX-owned UDP port. Rejected in standalone mode for now. |
 
-Light, Climate, Lock, Media Player, Switch, Sensor, Binary Sensor, and control
-mapping options remain planned and are currently rejected instead of being
-silently ignored.
+Light, Climate, Lock, Media Player, Switch, and control mappings remain planned
+and are currently rejected instead of being silently ignored.
